@@ -2,14 +2,16 @@
 
 這是適用於 Windows 11 的 Codex 與 Antigravity 檔案交接專案。它包含本機初始化、環境檢查、角色規範，以及已驗證的 Python 交接與中斷復原模擬器。可在不同電腦各自部署，並使用相同的交接規則。
 
-**目前支援離線模擬。** 設定中的 GUI 自動化預設關閉。專案未接上真實 Antigravity 工作階段，也不會替你登入、送出模型任務、授權、扣額度或改動應用程式的全域設定。
+**目前支援離線模擬。** 設定中的 GUI 自動化預設關閉。專案尚未內建真正的 Antigravity GUI 橋接，也不會替你登入、送出模型任務、授權、扣額度或改動應用程式的全域設定。
+
+**使用風險與平台條款**集中記載於 [DISCLAIMER.md](DISCLAIMER.md)，由使用者自行閱讀、評估與決定是否使用。這份風險告知不是每次任務都要求 Agent 上網重查條款的執行步驟；實際權限提示、付款提示或工具拒絕仍應停止處理。
 
 ## 架構
 
 | 角色 | 工作 |
 |---|---|
 | Sol（Codex 主 Agent） | 決定路由、任務內容與驗收條件。保留派工收據、辨識重複任務、核對結果。 |
-| Terra Low（Codex Computer Use） | 在平台允許且有人監看的情況下，按 Sol 的指示操作 GUI，回報所見的回執、權限提示或不明狀態。 |
+| Terra Low（Codex Computer Use） | 在使用者指定的試行中，按 Sol 的指示操作 GUI，回報所見的回執、權限提示或不明狀態；不自行更換模型或核准敏感操作。 |
 | Antigravity 的 Gemini Flash | 在獨立工作目錄執行單一匿名任務，先交付結果，再發布完成標記。 |
 
 可直接交給兩個 Codex 角色使用的規範見 [ROLES.md](ROLES.md)。模型名稱是路由目標，請以工作階段實際顯示的選項為準。
@@ -43,7 +45,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\doctor.ps1
 - `pythonExecutable`、`codexExecutable`、`antigravityExecutable` 預設是 `null`，由 Doctor 自動探測。必要時填入可信的 `.exe` 路徑。JSON 字串可使用 `/` 作為路徑分隔符。請把帳號及憑證留在官方應用程式中。
 - 兩台電腦各用自己的本機工作目錄。SQLite 收據只提供本機防重複。若要移轉一組測試狀態，先停止兩邊的寫入，再將資料庫和交接子目錄一起搬移。
 
-Doctor 會檢查 Windows 組建、PowerShell、設定檔、Python、SQLite 及工作目錄的建立／讀取／刪除能力。它只找 Codex、Antigravity 的安裝線索。登入、模型選項、Computer Use、權限、平台規範與額度都會顯示「需人工驗證」。結束碼 `0` 表示可自動檢查的項目沒有失敗；`1` 表示有自動檢查失敗。請同時閱讀「需人工驗證」，不要把結束碼當成 GUI 已就緒。
+Doctor 會檢查 Windows 組建、PowerShell、設定檔、Python、SQLite 及工作目錄的建立／讀取／刪除能力。它只找 Codex、Antigravity 的安裝線索。登入、模型選項、Computer Use、實際操作權限與額度都會顯示「需人工驗證」。平台使用風險另見 DISCLAIMER.md，不列入每次派工的自動審查。結束碼 `0` 表示可自動檢查的項目沒有失敗；`1` 表示有自動檢查失敗。請同時閱讀「需人工驗證」，不要把結束碼當成 GUI 已就緒。
 
 ## 使用方式
 
@@ -51,7 +53,7 @@ Doctor 會檢查 Windows 組建、PowerShell、設定檔、Python、SQLite 及�
 
 **在測試程式中使用**：[handoff_sim.py](handoff_sim.py) 的 `LocalCoordinator(directory)` 接受已建立的本機工作目錄。原有的 `run(...)` 使用本機模擬工作者，`recover(task_id)` 根據同一工作目錄的 SQLite 收據恢復追蹤。沒有命令列派工器、GUI 橋接或 MCP。最小可重現範例見 [test_handoff_stage2.py](test_handoff_stage2.py)，復原案例見 [test_handoff_stage3.py](test_handoff_stage3.py)。
 
-**實機工作流**：完成 Doctor 及人工檢查後，先確認所在組織與兩個平台允許的 GUI 操作方式。在另行確認後，以一筆合成任務、一次 Gemini Flash 送出及人工監看開始。遇到權限、付費、額度不明、模型不符或回執不明時停止，由 Sol 回報。這一步需要另外實測，初始化與 Doctor 不會啟用它。
+**實機工作流**：使用者自行閱讀 [DISCLAIMER.md](DISCLAIMER.md) 並決定試行後，先確認帳號登入、模型選項與共用目錄，再以一筆合成任務、一次 Gemini Flash 送出及人工監看開始。Sol／Terra 不應把「每次上網重新研究平台條款」當成例行派工步驟。遇到實際權限拒絕、付費、額度不明、模型不符或回執不明時停止，由 Sol 回報，不自行繞過限制。這一步需要另外實測，初始化與 Doctor 不會啟用它。
 
 ### 檔案交接協定
 
@@ -83,4 +85,4 @@ Doctor 會檢查 Windows 組建、PowerShell、設定檔、Python、SQLite 及�
 
 `.gitignore` 採用檔案白名單，只放行程式、範本、測試和文件。請將實際設定、任務資料、SQLite 收據及憑證留在本機。建立私人儲存庫前，以 `git status --short --untracked-files=all` 核對待加入項目；忽略規則不會移除已追蹤檔案。
 
-已驗證 Windows 本機初始化、重跑保護、環境檢查及 24 項離線測試。第二台實體電腦、真實 GUI 操作、權限提示辨識、卡住時的中止、實際送出回執與 Gemini 額度都仍需實機驗證。
+已驗證 Windows 本機初始化、重跑保護、環境檢查及 24 項離線測試；依部署回報，第二台 Windows 電腦亦通過相同的離線測試。真實 GUI 操作、權限提示辨識、卡住時的中止、實際送出回執與 Gemini 額度都仍需實機驗證。
