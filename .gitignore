@@ -1,6 +1,7 @@
 *
 !/.gitignore
 !/README.md
+!/DISCLAIMER.md
 !/ROLES.md
 !/setup.ps1
 !/doctor.ps1
