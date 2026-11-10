@@ -1,0 +1,13 @@
+*
+!/.gitignore
+!/README.md
+!/ROLES.md
+!/setup.ps1
+!/doctor.ps1
+!/harness-config.ps1
+!/handoff_sim.py
+!/test_handoff_stage2.py
+!/test_handoff_stage3.py
+!/config/
+!/config/defaults.json
+!/config/local.example.json

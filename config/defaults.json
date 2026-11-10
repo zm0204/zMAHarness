@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "routing": {
+    "owner": "Sol",
+    "ownerModel": "gpt-6.1-sol",
+    "guiOperator": "Terra Low",
+    "guiOperatorModel": "gpt-6.1-terra",
+    "guiOperatorEffort": "low",
+    "externalApp": "Antigravity",
+    "externalModel": "Gemini Flash",
+    "fallbackModel": null,
+    "guiAutomationEnabled": false,
+    "platformReviewRequired": true,
+    "humanSupervisionRequired": true
+  },
+  "handoff": {
+    "protocolVersion": 1,
+    "encoding": "UTF-8",
+    "files": ["task.md", "result.md", "DONE"],
+    "publishDoneLast": true,
+    "autoResendUnknown": false,
+    "pilotTimeoutSeconds": 300,
+    "pilotPollSeconds": 2
+  },
+  "quota": {
+    "maxConcurrentTasks": 1,
+    "maxSubmissionsPerTaskId": 1,
+    "maxExternalSubmissionsPerPilot": 1,
+    "stopOnPermissionPrompt": true,
+    "stopOnPaymentPrompt": true,
+    "stopOnUnknownModelOrQuota": true
+  }
+}
