@@ -99,8 +99,8 @@ else { Report-Check '失敗' 'PowerShell' '需要 PowerShell 5.1 以上。' }
 try {
     $shared = Read-HarnessJson (Join-Path $PSScriptRoot 'config/defaults.json')
     if ($shared.routing.guiAutomationEnabled -isnot [bool] -or $shared.routing.guiAutomationEnabled -or
-        $shared.routing.platformReviewRequired -ne $true -or $shared.routing.humanSupervisionRequired -ne $true) {
-        throw '共用設定須維持 GUI 停用、平台規範確認與人工監看。'
+        $shared.routing.platformReviewRequired -ne $false -or $shared.routing.humanSupervisionRequired -ne $true) {
+        throw '共用設定須維持 GUI 預設停用、平台風險告知與日常派工規則分離，以及人工監看。'
     }
     if ($shared.handoff.protocolVersion -ne 1 -or $shared.handoff.publishDoneLast -ne $true -or
         $shared.handoff.autoResendUnknown -ne $false -or $shared.quota.maxConcurrentTasks -ne 1 -or
