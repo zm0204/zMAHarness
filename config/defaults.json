@@ -10,7 +10,7 @@
     "externalModel": "Gemini Flash",
     "fallbackModel": null,
     "guiAutomationEnabled": false,
-    "platformReviewRequired": true,
+    "platformReviewRequired": false,
     "humanSupervisionRequired": true
   },
   "handoff": {
