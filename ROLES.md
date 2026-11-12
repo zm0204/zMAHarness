@@ -1,4 +1,4 @@
-# Sol 與 Terra Low 角色規範
+# V1 檔案交接的 Sol 與 Terra Low 角色規範
 
 使用 [config/defaults.json](config/defaults.json) 的路由與額度作為共用規則。每台電腦的工作路徑來自自己的 `.local/settings.json`。平台使用條款與風險由使用者自行評估，說明集中於 [DISCLAIMER.md](DISCLAIMER.md)；**不要把每次重新搜尋或審查平台條款當成日常派工前置任務**。進行實機操作時仍須確認所選模型與實際可用權限，不得繞過工具的拒絕或核准提示。當前預設為本機模擬。
 

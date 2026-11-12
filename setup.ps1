@@ -4,6 +4,73 @@ param([ValidateNotNullOrEmpty()][string]$WorkspacePath)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'harness-config.ps1')
 
+function Install-ZMAHarness {
+    if (-not $env:LOCALAPPDATA -or -not $env:USERPROFILE) {
+        throw '需要 Windows 使用者的 LOCALAPPDATA 與 USERPROFILE。'
+    }
+    $pythonPath = Get-HarnessPathPython
+    $skillSource = Join-Path $PSScriptRoot '.agents/skills/harness/SKILL.md'
+    $configSource = Join-Path $PSScriptRoot 'harness.local.example.toml'
+    foreach ($source in @($skillSource, $configSource, (Join-Path $PSScriptRoot 'mah/__main__.py'))) {
+        if (-not [IO.File]::Exists($source)) { throw "安裝來源缺少檔案：$source" }
+    }
+
+    # 用 ASCII 路徑字面值相容 Python 3.11/3.12 的系統區域編碼與新版 UTF-8。
+    $register = @'
+import os
+from pathlib import Path
+import site
+import sys
+import tempfile
+
+if sys.version_info < (3, 11) or site.ENABLE_USER_SITE is not True:
+    sys.exit('zMAHarness needs Python 3.11+ with its user site enabled.')
+root = Path(sys.argv[1]).resolve(strict=True)
+site_dir = Path(site.getusersitepackages())
+payload = f'import sys; p = {ascii(str(root))}; sys.path.append(p) if p not in sys.path else None\n'.encode('ascii')
+site_dir.mkdir(parents=True, exist_ok=True)
+target = site_dir / 'zmaharness.pth'
+if target.is_file() and target.read_bytes() == payload:
+    sys.exit(0)
+with tempfile.NamedTemporaryFile(dir=site_dir, delete=False) as out:
+    temp_path = Path(out.name)
+try:
+    temp_path.write_bytes(payload)
+    os.replace(temp_path, target)
+finally:
+    temp_path.unlink(missing_ok=True)
+'@
+    & $pythonPath -B -c $register $PSScriptRoot
+    if ($LASTEXITCODE -ne 0) { throw '無法註冊 Python 使用者的 zmaharness.pth。' }
+
+    $v2Root = Join-Path $env:LOCALAPPDATA 'zMAHarness'
+    $null = [IO.Directory]::CreateDirectory($v2Root)
+    foreach ($name in @('state', 'worktrees', 'gui')) {
+        $null = [IO.Directory]::CreateDirectory((Join-Path $v2Root $name))
+    }
+    $v2Config = Join-Path $v2Root 'harness.local.toml'
+    if (-not [IO.File]::Exists($v2Config)) {
+        $temporary = Join-Path $v2Root ("harness.{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+        try {
+            [IO.File]::Copy($configSource, $temporary)
+            try { [IO.File]::Move($temporary, $v2Config) }
+            catch [IO.IOException] { if (-not [IO.File]::Exists($v2Config)) { throw } }
+        }
+        finally { [IO.File]::Delete($temporary) }
+    }
+    $legacyConfig = Join-Path $env:LOCALAPPDATA 'MultiAgentHarness/harness.local.toml'
+    if ([IO.File]::Exists($legacyConfig)) {
+        Write-Output '[提示] 舊設定及資料保留。預設使用新設定，既有 Run 可用 --config 指向舊設定繼續處理。'
+    }
+
+    $skillRoot = Join-Path $env:USERPROFILE '.agents/skills/harness'
+    $null = [IO.Directory]::CreateDirectory($skillRoot)
+    [IO.File]::Copy($skillSource, (Join-Path $skillRoot 'SKILL.md'), $true)
+    Write-Output "[通過] zMAHarness 本機設定：$v2Config"
+    Write-Output '[通過] 已註冊 Python 使用者模組路徑（zmaharness.pth）。'
+    Write-Output "[通過] 已安裝 Codex 使用者技能：$skillRoot"
+}
+
 try {
     $localRoot = Join-Path $PSScriptRoot '.local'
     $localFile = Join-Path $localRoot 'settings.json'
@@ -45,6 +112,7 @@ try {
     if ($created) { Write-Output "[通過] 已建立本機設定：$localFile" }
     else { Write-Output "[通過] 已保留本機設定：$localFile" }
     Write-Output "[通過] 工作目錄：$workspace"
+    Install-ZMAHarness
     Write-Output '下一步：執行 .\doctor.ps1。'
     exit 0
 }

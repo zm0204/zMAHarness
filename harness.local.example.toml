@@ -1,0 +1,46 @@
+# 將本範本複製到本機設定路徑，不要提交實際設定。
+# Windows 預設：%LOCALAPPDATA%/zMAHarness/harness.local.toml
+# 以下相對路徑以本機 TOML 所在目錄為基準。
+[paths]
+state_dir = "state"
+worktree_root = "worktrees"
+gui_workspace_root = "gui"
+
+[adapters]
+enabled = ["codex-exec", "gui-terra", "agy-print"]
+codex_command = "codex"
+# 可使用官方執行檔的完整路徑，或相對於本 TOML 的路徑。
+agy_command = "agy"
+
+[approval]
+mode = "codex_prompt"
+grant_ttl_minutes = 240
+
+[limits]
+max_dispatches_per_grant = 5
+max_concurrency = 1
+max_effort = "high"
+max_task_bytes = 32768
+max_result_summary_chars = 2000
+
+# 派工卡使用明確的 Adapter、模型和 effort。
+[defaults]
+review = { adapter = "agy-print", model = "gemini-3.8-flash-low", effort = "low" }
+second_opinion = { adapter = "agy-print", model = "gemini-3.8-flash-low", effort = "low" }
+research = { adapter = "agy-print", model = "gemini-3.8-flash-low", effort = "low" }
+delegate_implement = { adapter = "codex-exec", effort = "medium" }
+
+[triggers]
+t1_failed_fix_rounds = 2
+t2_risky_diff_lines = 80
+t2_risky_paths = ["auth", "security", "migration", "permission"]
+t3_read_files = 15
+t3_read_kb = 200
+t4_codex_used_percent = 70
+
+[verify]
+allowed_command_prefixes = ["pytest", "npm test", "npm run test", "dotnet test"]
+timeout_s = 900
+
+[privacy]
+retain_run_dirs_days = 30

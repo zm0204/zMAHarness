@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "template_payload"
+  ],
+  "properties": {
+    "template_payload": {
+      "type": "object",
+      "properties": {
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hypothesis": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1
+              },
+              "experiment": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "hypothesis",
+              "evidence",
+              "experiment"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "recommended_next_step": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "hypotheses",
+        "recommended_next_step"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "template_payload"
+  ],
+  "properties": {
+    "template_payload": {
+      "type": "object",
+      "properties": {
+        "changed_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "commands_run": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cmd": {
+                "type": "string",
+                "minLength": 1
+              },
+              "exit_code": {
+                "type": "integer"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cmd",
+              "exit_code",
+              "summary"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changed_files",
+        "commands_run",
+        "notes"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

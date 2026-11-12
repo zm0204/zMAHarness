@@ -44,3 +44,11 @@ function Resolve-HarnessPath {
     }
     return [IO.Path]::GetFullPath((Join-Path $Root $Path))
 }
+
+function Get-HarnessPathPython {
+    $command = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $command -or $command.Source -like '*\Microsoft\WindowsApps\*') {
+        throw '請將可直接執行的 Python 3.11 以上版本加入 PATH，並重新開啟終端。'
+    }
+    return $command.Source
+}

@@ -195,6 +195,85 @@ Report-Check '需人工驗證' 'Codex 工作階段' '登入、Sol 與 Terra Low 
 Report-Check '需人工驗證' 'Antigravity 工作階段' '登入、Gemini Flash 的實際選項、剩餘額度與送出回執。'
 Report-Check '需人工驗證' 'GUI 與平台規範' '確認允許的操作方式，並人工監看權限提示、逾時中止及檔案交接。'
 
+Write-Output '--- zMAHarness V2 環境 ---'
+$v2Settings = $null
+$v2Config = $null
+if ($env:LOCALAPPDATA) { $v2Config = Join-Path $env:LOCALAPPDATA 'zMAHarness/harness.local.toml' }
+$hasV2Config = $v2Config -and [IO.File]::Exists($v2Config)
+if (-not $hasV2Config) {
+    Report-Check '失敗' 'zMAHarness TOML' '找不到 %LOCALAPPDATA%\zMAHarness\harness.local.toml。請執行 setup.ps1。'
+}
+
+$savedPythonPath = $env:PYTHONPATH
+$locationPushed = $false
+try {
+    $pathPython = Get-HarnessPathPython
+    if (-not $env:LOCALAPPDATA) { throw '缺少 LOCALAPPDATA，無法從引擎以外的目錄測試。' }
+    Push-Location -LiteralPath $env:LOCALAPPDATA
+    $locationPushed = $true
+    $env:PYTHONPATH = $null
+    $help = & $pathPython -B -m mah --help 2>&1
+    if ($LASTEXITCODE -ne 0 -or ($help -join "`n") -notmatch 'zMAHarness') {
+        throw '無法從引擎以外的目錄執行 python -B -m mah --help。請檢查 Python 使用者安裝。'
+    }
+    $registration = 'import importlib.util, pathlib, site, sys; spec = importlib.util.find_spec(''mah.__main__''); pth = pathlib.Path(site.getusersitepackages()) / ''zmaharness.pth''; entry = pathlib.Path(sys.argv[1]).resolve() / ''mah'' / ''__main__.py''; sys.exit(0 if pth.is_file() and spec and pathlib.Path(spec.origin).resolve() == entry else 2)'
+    & $pathPython -B -c $registration $PSScriptRoot
+    if ($LASTEXITCODE -ne 0) { throw '目前 python 找到其他副本，或 zmaharness.pth 尚未註冊。請重跑此副本的 setup.ps1。' }
+    Report-Check '通過' 'zMAHarness 跨專案 CLI' '已從引擎以外的目錄執行 --help，並核對安裝來源。'
+    if ($hasV2Config) {
+        try {
+            $readToml = 'import json, sys; from mah.config import load_config; print(json.dumps(load_config(sys.argv[1]).values[''adapters'']))'
+            $configResult = & $pathPython -B -c $readToml $v2Config 2>&1
+            if ($LASTEXITCODE -ne 0) { throw '無法載入本機 TOML。' }
+            $v2Settings = ($configResult -join "`n") | ConvertFrom-Json
+            Report-Check '通過' 'zMAHarness TOML' $v2Config
+        }
+        catch { Report-Check '失敗' 'zMAHarness TOML' $_.Exception.Message }
+    }
+}
+catch {
+    Report-Check '失敗' 'zMAHarness 跨專案 CLI' $_.Exception.Message
+    if ($hasV2Config) { Report-Check '需人工驗證' 'zMAHarness TOML' '設定檔存在，修復 Python 安裝後再檢查內容。' }
+}
+finally {
+    $env:PYTHONPATH = $savedPythonPath
+    if ($locationPushed) { Pop-Location }
+}
+
+$agyName = if ($v2Settings.agy_command) { $v2Settings.agy_command } else { 'agy' }
+$agyPath = $null
+try {
+    if ($agyName -match '[\\/]') {
+        $candidate = Resolve-HarnessPath (Split-Path -Parent $v2Config) $agyName
+        if ([IO.File]::Exists($candidate) -and [IO.Path]::GetExtension($candidate) -ieq '.exe') { $agyPath = $candidate }
+    }
+    else {
+        $agyExe = if ($agyName.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $agyName } else { "$agyName.exe" }
+        $agyPath = (Get-Command $agyExe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+        if (-not $agyPath -and $agyName -ceq 'agy' -and $env:LOCALAPPDATA) {
+            $candidate = Join-Path $env:LOCALAPPDATA 'agy/bin/agy.exe'
+            if ([IO.File]::Exists($candidate)) { $agyPath = $candidate }
+        }
+    }
+    if ($agyPath) { Report-Check '通過' 'agy 執行檔' $agyPath }
+    else { Report-Check '需人工驗證' 'agy 執行檔' '未找到 agy.exe。使用 Gemini Worker 前請安裝官方 Antigravity CLI，或檢查 TOML 的 agy_command。' }
+}
+catch { Report-Check '失敗' 'agy 執行檔' $_.Exception.Message }
+
+$skillPath = $null
+if ($env:USERPROFILE) { $skillPath = Join-Path $env:USERPROFILE '.agents/skills/harness/SKILL.md' }
+try {
+    $sourceSkill = Join-Path $PSScriptRoot '.agents/skills/harness/SKILL.md'
+    if (-not $skillPath -or -not [IO.File]::Exists($skillPath)) { throw '請執行 setup.ps1 安裝 Codex 使用者技能。' }
+    $installedSkill = [Convert]::ToBase64String([IO.File]::ReadAllBytes($skillPath))
+    $expectedSkill = [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourceSkill))
+    if ($installedSkill -cne $expectedSkill) {
+        throw '已安裝的技能與此副本不同，請重新執行 setup.ps1。'
+    }
+    Report-Check '通過' 'Codex 使用者技能' $skillPath
+}
+catch { Report-Check '失敗' 'Codex 使用者技能' $_.Exception.Message }
+
 if ($script:Failed) { exit 1 }
 Write-Output '已完成可自動檢查的項目。標為「需人工驗證」的項目仍待確認。'
 exit 0
