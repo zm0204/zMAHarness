@@ -14,27 +14,41 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
 | T2 | 變更觸及 `t2_risky_paths` 且差異行數達 `t2_risky_diff_lines` |
 | T3 | 預計讀取達 `t3_read_files` 或 `t3_read_kb`，預期產出很小 |
 | T4 | 既有 Codex 額度快照達 `t4_codex_used_percent`，且有低成本驗收方法。缺快照時不用 T4 |
-| T5 | 使用者明確要求協作 |
+| T5 | 使用者主動要求協作或呼叫 `$harness` |
 
 ## 對話內提議
 
-使用標題「【zMAHarness 協作建議】」，卡片主體只顯示這五項。
+使用 Codex Desktop 原生互動提問工具送出**單一問題**，標題為「【zMAHarness 協作建議】」。
+以下五項資訊、三個選項與「或自行輸入回覆」放在同一頁，一步完成，不翻頁。
 
-- **觸發原因**　例如 T2 · 高風險程式修改
-- **建議 Worker**　例如 Gemini
-- **任務類型**　Review、Second Opinion 或 Research
-- **權限**　說明 Worker 只分析選定內容，例如只進行審查
+- **觸發原因**　例如 `T2 · 高風險程式修改` 或 `T5 · 使用者主動要求`。
+- **建議模型**　顯示預設模型及思考程度 `gemini-3.8-flash-low · low`。
+- **任務與範圍**　顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
+  列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
+- **授權限制**　顯示 `僅 1 次 · 唯讀 · <逾時秒數> 秒`，填入實際逾時秒數。
 - **為什麼建議協作？**　一至兩句白話說明預期收益
 
-有原生互動選項時呈現「不同意」和「繼續協作」。否則在對話卡片末尾列出
-`[ 不同意 ]` ／ `[ 繼續協作 ]`。Card ID、雜湊、Grant、工作目錄及證據檔由 Sol
-在背景處理。以使用者針對本次建議的明確決定為準。
+1. `不同意（由 Sol 自己繼續完成）`
+2. `繼續協作（預設：gemini-3.8-flash-low · low）`
+3. `繼續協作（改用高階：gemini-3.8-flash-high · high）`
 
-- **不同意**　若已出卡，背景執行 `mah card reject <card_id>`。記住本次決定，
-  立即由 Sol 在本地繼續原任務。即使拒絕紀錄暫時無法寫入，也繼續原任務。
-  同一問題不再提議或追問。
-- **繼續協作**　依已顯示的 Worker、任務與權限執行下列背景流程，然後繼續原任務。
-  若派工或驗收受阻，回報具體原因並繼續本地工作。
+**T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
+點選或手打回覆。初始的 T5 請求或 `$harness` 呼叫只觸發提議。即使初始請求已指定模型與
+檔案，也不得在顯示卡片的同一輪執行 `card create`、`grant approve` 或 `dispatch`。
+只有收到該卡片的回覆後，才能在下一輪依該回覆進行授權與派工。原生互動工具不可用時，
+回報限制並由 Sol 本地繼續原任務。Card ID、雜湊、Grant、工作目錄及證據檔留在背景。
+
+- **不同意**　Sol 立即在本地繼續原任務，同一問題不再提議或追問。若已有待核准卡片，
+  在收到回覆後以 `mah card reject <card_id>` 記錄拒絕。寫入失敗時仍繼續原任務。
+- **點選繼續協作**　採用選項標明的模型與 effort，維持卡片上的任務、範圍和授權限制。
+- **手打覆寫**　把該卡片中明確指定模型、effort 或檔案範圍的回覆視為同意協作，例如
+  「換 4argon」、「用 medium」或「只看 io.py」。以能確認的模型清單與相容規則解析回覆，
+  未指定的欄位沿用卡片。模型與 `--effort` 有相容性要求時，自動對齊唯一符合使用者意圖的
+  有效組合，再以最終模型、effort 與範圍建立單次 Card 與 Grant。
+
+若別名、effort 或檔名有歧義，先用單頁卡片澄清再等待回覆。若縮小後的範圍無法由原模式
+遵守，採用能維持該範圍的模式。無法維持時回報限制，擴大可讀範圍前須重新提議。
+選定模型不可用時回報具體原因，由 Sol 繼續本地工作。
 
 ## 背景派工與驗收
 
@@ -47,7 +61,7 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 皆指向目前開發的**目標 Git 專案根目錄**，例如 BatchTable。以目標專案的
 `git rev-parse --show-toplevel` 取得根目錄，使用實際目標專案準備資料及派工。
 使用 `agy-print` 派工時，全程僅使用命令列執行，禁止動用 Computer Use 查看 Antigravity GUI 設定、模型清單或查詢 `/usage` 額度。
-`codex-exec` 等 CLI Adapter 也遵循相同原則。模型和 effort 依本機 TOML 或內建預設，日常派工略過前後額度查詢。
+`codex-exec` 等 CLI Adapter 也遵循相同原則。實際模型和 effort 以卡片回覆確認的組合為準，日常派工略過前後額度查詢。
 `agy-print` 的會話設定固定關閉 AI Credits。
 
 1. 依 Worker 需要的檔案與已同意的範圍選擇模式。
@@ -61,10 +75,10 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
      完整檔案由 Worker 在分離工作樹中唯讀查閱。保留輸出的 `worktree_path`、`snapshot_head`
      和 `baseline_sha256`，以相同 Run ID 派工，並在派工及驗收時核對快照 HEAD 和基線。
    - Research 在任務及派工的 `--requirements-file` 列出相同的 1～3 個問題。
-2. 以 `card create` 建立已同意範圍的單次卡片。綁定儲存庫、模板、Adapter、模型、
+2. 在顯示對話卡後的下一輪，收到使用者回覆才以 `card create` 建立單次卡片。綁定儲存庫、模板、Adapter、模型、
    effort 上限、實際任務 SHA-256、工作目錄、逾時及期限。Sol 取得完整卡片 SHA-256
    並執行 `grant approve <card_id> --sha <完整 SHA-256> --via codex_prompt`。
-   這筆帳本紀錄代表 Sol 已收到使用者的對話決定。範圍變更須提出新的建議。
+   這筆帳本紀錄對應使用者對卡片的決定。超出該回覆同意的範圍時須提出新的建議。
 3. 核對 Grant 有效且未使用，使用 `dispatch` 送出一筆符合範圍的唯讀分析。
    若回傳 `SUBMISSION_UNKNOWN`，保留收據，以 `status` 或 `collect` 查已有結果。
    禁止自動重送。結束碼 30 時讀取狀態與原因。

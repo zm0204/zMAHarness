@@ -158,7 +158,11 @@ class ContextBundleTests(unittest.TestCase):
                 self.assertEqual(git(cwd, "show", ":" + added), (self.repo / added).read_bytes())
                 self.assertTrue(git(cwd, "ls-files", "--stage", "--", "README.md").startswith(b"100755 "))
                 self.assertFalse((cwd / FILES[1]).exists())
-                self.assertEqual((cwd / ".gitignore").read_bytes(), git(self.repo, "show", "HEAD:.gitignore"))
+                ignore_at_head = git(self.repo, "show", "HEAD:.gitignore")
+                self.assertEqual(git(cwd, "show", ":.gitignore"), ignore_at_head)
+                # Git may convert line endings when populating the linked worktree.
+                self.assertEqual((cwd / ".gitignore").read_bytes().replace(b"\r\n", b"\n"),
+                                 ignore_at_head.replace(b"\r\n", b"\n"))
                 self.assertFalse(any((cwd / name).exists() for name in (".env", "ignored.pem", "ignored.txt")))
                 simulated.append(args)
                 return b""
