@@ -78,7 +78,14 @@ schema = json.loads(args.json_schema)
 run_id = schema["properties"]["run_id"]["const"]
 template = schema["properties"]["template"]["const"]
 time.sleep(0.1)
-if scenario == "timeout":
+if scenario in ("timeout", "logged_timeout", "created_only", "stream_timeout"):
+    if scenario != "timeout":
+        log = "I1112 22:46:56.253018       1 server.go:1233] Created conversation 12345678-1234-4234-8234-123456789abc\n"
+        if scenario == "logged_timeout":
+            log += "I1112 22:46:56.254706       1 server.go:1817] Sending user message\n"
+        elif scenario == "stream_timeout":
+            log += "I1112 22:47:03.887409     990 http_helpers.go:654] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\n"
+        Path(args.log_file).write_text(log, encoding="utf-8")
     sys.stdout.buffer.write(b"partial")
     sys.stdout.buffer.flush()
     time.sleep(60)
@@ -855,6 +862,34 @@ class AgyProcessTests(unittest.TestCase):
         self.assertEqual(view["agy_capture"]["termination"], "timeout")
         self.assertEqual((self.directory / "agy.stdout.json").read_bytes(), b"partial")
 
+    def test_timeout_with_log_submission_preserves_conversation_and_does_not_relaunch(self):
+        with patch("mah.adapters.agy_print.Popen", side_effect=self.substitute):
+            view = self.run_dispatch("logged_timeout", timeout_s=1, grant_id=self.make_grant("logged_timeout", timeout=1))
+        self.assertEqual((view["state"], view["state_reason"]), ("TIMED_OUT", "process_timed_out"))
+        conversation = "12345678-1234-4234-8234-123456789abc"
+        self.assertEqual(view["conversation_id"], conversation)
+        evidence = view["agy_capture"]["log_submission"]
+        self.assertEqual(evidence["conversation_id"], conversation)
+        self.assertEqual(evidence["sha256"], sha256((self.directory / "agy.cli.log").read_bytes()).hexdigest())
+        self.assertEqual((self.directory / "agy.stdout.json").read_bytes(), b"partial")
+        self.assertFalse((self.directory / "DONE").exists())
+        with patch("mah.adapters.agy_print.Popen", side_effect=AssertionError("recovery cannot launch")):
+            self.assertEqual(self.adapter.collect_saved(self.run)["state"], "TIMED_OUT")
+        self.assertEqual(len(self.started), 1)
+        self.assertEqual(self.ledger.get_grant(view["grant_id"])["used_dispatches"], 1)
+
+    def test_timeout_with_conversation_creation_only_keeps_unknown(self):
+        with patch("mah.adapters.agy_print.Popen", side_effect=self.substitute):
+            view = self.run_dispatch("created_only", timeout_s=1, grant_id=self.make_grant("created_only", timeout=1))
+        self.assertEqual((view["state"], view["state_reason"]), ("SUBMISSION_UNKNOWN", "submission_evidence_missing"))
+        self.assertIsNone(view["conversation_id"])
+
+    def test_timeout_with_stream_request_log_counts_as_submitted(self):
+        with patch("mah.adapters.agy_print.Popen", side_effect=self.substitute):
+            view = self.run_dispatch("stream_timeout", timeout_s=1, grant_id=self.make_grant("stream_timeout", timeout=1))
+        self.assertEqual((view["state"], view["state_reason"]), ("TIMED_OUT", "process_timed_out"))
+        self.assertEqual(view["conversation_id"], "12345678-1234-4234-8234-123456789abc")
+
     def test_malformed_streams_are_retained_without_done(self):
         with patch("mah.adapters.agy_print.Popen", side_effect=self.substitute):
             view = self.run_dispatch("corrupt", grant_id=self.make_grant("corrupt"))
@@ -909,7 +944,7 @@ class AgyProcessTests(unittest.TestCase):
         task.write_text("中文任務 scenario=success", encoding="utf-8")
         args = ["--config", str(settings), "dispatch", "--grant", self.grant, "--run-id", self.run, "--template", "review",
                 "--adapter", "agy-print", "--model", MODEL, "--effort", "low", "--task-file", str(task),
-                "--workspace", str(self.workspace), "--timeout", "5"]
+                "--workspace", str(self.workspace)]
         stdout = StringIO()
         # Fixture paths stay within this project for the offline run.
         with patch("mah.config._local_path", side_effect=lambda path, name: path), patch(
@@ -923,4 +958,5 @@ class AgyProcessTests(unittest.TestCase):
             task.write_bytes(self.task_bytes())
             self.assertEqual(cli.main(args), 30)
         self.assertEqual(Path(self.started[0][0]), Path(sys.executable).resolve())
+        self.assertEqual(self.started[0][self.started[0].index("--print-timeout") + 1], "5s")
         self.assertEqual(json.loads(stdout.getvalue())["state"], "COLLECTING")

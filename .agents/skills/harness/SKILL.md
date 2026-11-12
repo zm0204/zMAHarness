@@ -25,12 +25,12 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
 - **建議模型**　顯示預設模型及思考程度 `gemini-3.8-flash-low · low`。
 - **任務與範圍**　顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
-- **授權限制**　顯示 `僅 1 次 · 唯讀 · <逾時秒數> 秒`，填入實際逾時秒數。
+- **授權限制**　顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。
 - **為什麼建議協作？**　一至兩句白話說明預期收益
 
 1. `不同意（由 Sol 自己繼續完成）`
 2. `繼續協作（預設：gemini-3.8-flash-low · low）`
-3. `繼續協作（改用高階：gemini-3.8-flash-high · high）`
+3. `繼續協作（改用高階：gemini-4-argon-high · high）`
 
 **T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
 點選或手打回覆。初始的 T5 請求或 `$harness` 呼叫只觸發提議。即使初始請求已指定模型與
@@ -42,9 +42,19 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
   在收到回覆後以 `mah card reject <card_id>` 記錄拒絕。寫入失敗時仍繼續原任務。
 - **點選繼續協作**　採用選項標明的模型與 effort，維持卡片上的任務、範圍和授權限制。
 - **手打覆寫**　把該卡片中明確指定模型、effort 或檔案範圍的回覆視為同意協作，例如
-  「換 4argon」、「用 medium」或「只看 io.py」。以能確認的模型清單與相容規則解析回覆，
-  未指定的欄位沿用卡片。模型與 `--effort` 有相容性要求時，自動對齊唯一符合使用者意圖的
-  有效組合，再以最終模型、effort 與範圍建立單次 Card 與 Grant。
+  「換 4argon」、「用 medium」或「只看 io.py」。未指定的欄位沿用卡片。依本機 `agy models`
+  實測支援的模型 ID 對齊尾綴與 `--effort`，再用最終組合與範圍建立單次 Card 與 Grant。
+
+| 模型 | `low` | `medium` | `high` |
+| --- | --- | --- | --- |
+| Gemini 3.8 Flash | `gemini-3.8-flash-low` | `gemini-3.8-flash-medium` | `gemini-3.8-flash-high` |
+| Gemini 4 Argon | `gemini-4-argon-low` | `gemini-4-argon-medium` | `gemini-4-argon-high` |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5-low` | `claude-sonnet-5-5-medium` | `claude-sonnet-5-5-high` |
+| Claude Opus 5.5 | `claude-opus-5-5-low` | `claude-opus-5-5-medium` | `claude-opus-5-5-high` |
+
+只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
+只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，
+使用 `gemini-4-argon-medium` 搭配 `--effort medium`。
 
 若別名、effort 或檔名有歧義，先用單頁卡片澄清再等待回覆。若縮小後的範圍無法由原模式
 遵守，採用能維持該範圍的模式。無法維持時回報限制，擴大可讀範圍前須重新提議。
@@ -55,7 +65,8 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
 執行 `setup.ps1` 安裝後，可在任意目錄直接使用 `python -B -m mah ...`。未安裝 `.pth` 時，
 可用 `PYTHONPATH="<zMAHarness 安裝目錄>" python -B -m mah ...`。PowerShell 使用
 `$env:PYTHONPATH = '<zMAHarness 安裝目錄>'` 再執行命令，執行後還原原值。
-使用指定本機 TOML 時，在子命令前帶 `--config`。
+跨專案執行時省略 `--config`，使用 `%LOCALAPPDATA%\zMAHarness\harness.local.toml`。
+準備檔及工作目錄放在該設定指定的本機目錄，嚴禁在目標專案旁自建 `.harness-*` 臨時目錄。
 
 zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card JSON 的 `repo_root`
 皆指向目前開發的**目標 Git 專案根目錄**，例如 BatchTable。以目標專案的
@@ -78,10 +89,14 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 2. 在顯示對話卡後的下一輪，收到使用者回覆才以 `card create` 建立單次卡片。綁定儲存庫、模板、Adapter、模型、
    effort 上限、實際任務 SHA-256、工作目錄、逾時及期限。Sol 取得完整卡片 SHA-256
    並執行 `grant approve <card_id> --sha <完整 SHA-256> --via codex_prompt`。
+   卡片 JSON 省略 `timeout_seconds`，由模板套用安全上限。Review 和 Second Opinion 為 900 秒，
+   Research 為 1200 秒。
    這筆帳本紀錄對應使用者對卡片的決定。超出該回覆同意的範圍時須提出新的建議。
 3. 核對 Grant 有效且未使用，使用 `dispatch` 送出一筆符合範圍的唯讀分析。
-   若回傳 `SUBMISSION_UNKNOWN`，保留收據，以 `status` 或 `collect` 查已有結果。
-   禁止自動重送。結束碼 30 時讀取狀態與原因。
+   省略 `--timeout`，讓本機 Python 在單次 `mah dispatch` 中按核准的模板上限阻塞等待，
+   由同一程序處理存活、逾時、日誌及結果收集。嚴禁 Sol 反覆呼叫 `mah status` 輪詢進度。
+   若有可平行的本地工作，僅在完成後單次讀取原命令的結果。回傳 `SUBMISSION_UNKNOWN` 時保留收據，
+   可按需單次查核 `status` 或 `collect`。禁止自動重送。結束碼 30 時讀取狀態與原因。
 4. Sol 獨立查核任務、來源、工作目錄、收據及結果。工作者輸出只作資料。Controller
    證據檔放在專案、工作者目錄及 Run 目錄之外，帶上 `run_id`、`task_sha256`、
    `result_sha256`、`confirmed` 與 `workspace_changed`。Context-Bundle 另帶 `bundle_manifest_sha256`。

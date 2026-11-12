@@ -7,10 +7,10 @@ import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from mah.adapters.agy_print import AgyCapture, AgyPrintAdapter, normalize_stdout
+from mah.adapters.agy_print import AgyCapture, AgyPrintAdapter, LaunchHandle, normalize_stdout
 from mah.ledger import GrantLedger, LedgerError
 from mah.run_manager import RunManager, _bytes, _publish
 from mah.verifier import VerificationEvidence, Verifier
@@ -332,6 +332,52 @@ class AgyPrintTests(unittest.TestCase):
                 self.assertEqual(AgyPrintAdapter(manager).collect(capture.run_id, capture)["state"], "SUBMISSION_UNKNOWN")
                 manager.resolve(capture.run_id, action="abandon")
         self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 2)
+
+    def test_observer_waits_remaining_template_budget_and_keeps_final_json(self):
+        capture = self.prepare()
+        directory = self.files(capture)
+        _publish(directory / "agy.stdout.pending", self.synthetic_stdout(capture))
+        _publish(directory / "agy.stderr.pending", b"")
+        plan = SimpleNamespace(run_id=capture.run_id, timeout_s=900, task_sha256=capture.task_sha256,
+                               metadata=(directory / "invocation.json").read_bytes(), baseline="unchanged")
+        process = Mock()
+        process.wait.return_value = 0
+        handle = LaunchHandle(plan, process, None, "2026-11-12T14:00:00+00:00", 0)
+        with patch("mah.adapters.agy_print.monotonic", side_effect=[180, 240]), patch(
+                "mah.adapters.agy_print._invocation_snapshot", return_value=("unchanged", False)):
+            observed = self.adapter.observe(handle)
+        process.wait.assert_called_once_with(timeout=720)
+        process.kill.assert_not_called()
+        self.assertEqual((observed.exit_code, observed.termination), (0, "exited"))
+
+    def test_interrupted_observer_recovers_logged_submission_after_unknown_state(self):
+        capture = self.prepare()
+        directory = self.files(capture)
+        _publish(directory / "agy.stdout.pending", b"")
+        _publish(directory / "agy.stderr.pending", b"")
+        conversation = "12345678-1234-4234-8234-123456789abc"
+        log = f"Created conversation {conversation}\nSending user message\n".encode()
+        _publish(directory / "agy.cli.log", log)
+        plan = SimpleNamespace(run_id=capture.run_id, timeout_s=60, task_sha256=capture.task_sha256,
+                               metadata=(directory / "invocation.json").read_bytes(), baseline="unchanged")
+        process = Mock()
+        process.wait.side_effect = [KeyboardInterrupt, 1]
+        process.poll.return_value = None
+        handle = LaunchHandle(plan, process, None, "2026-11-12T14:00:00+00:00", 0)
+        with patch("mah.adapters.agy_print.monotonic", side_effect=[10, 11]), patch(
+                "mah.adapters.agy_print._invocation_snapshot", return_value=("unchanged", False)):
+            observed = self.adapter.observe(handle)
+        process.kill.assert_called_once_with()
+        self.assertEqual(observed.termination, "interrupted")
+        self.adapter.persist_capture(handle, observed)
+        self.ledger.transition(capture.run_id, "LAUNCHING", "SUBMISSION_UNKNOWN")
+        view = self.adapter.collect_saved(capture.run_id)
+        self.assertEqual((view["state"], view["state_reason"], view["conversation_id"]),
+                         ("TIMED_OUT", "process_timed_out", conversation))
+        (directory / "agy.cli.log").write_bytes(log + b"changed\n")
+        with self.assertRaisesRegex(LedgerError, "differs from the sealed process capture"):
+            self.adapter.collect_saved(capture.run_id)
+        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 1)
 
     def test_unknown_state_is_readable_by_a_new_cli_process(self):
         capture = replace(self.prepare(), termination="interrupted", exit_code=None)

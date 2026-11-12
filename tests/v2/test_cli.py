@@ -92,6 +92,17 @@ class CliTests(unittest.TestCase):
                    "--via", "manual_cli", console="confirm")
         self.check(2, "card", "reject", "demo-1")
 
+    def test_scoped_cards_default_to_the_template_timeout(self):
+        for template, timeout in (("review", 900), ("second-opinion", 900), ("research", 1200)):
+            with self.subTest(template=template):
+                digest = self.create(
+                    template, allowed_templates=[template], task_key=template, workspace_path=str(self.root),
+                    task_sha256=sha256(template.encode()).hexdigest(),
+                    allowed_targets=[{"adapter": "agy-print", "model": "gemini-3.8-flash-low", "effort_max": "low"}],
+                )
+                approved = self.check(0, "grant", "approve", template, "--sha", digest, "--via", "codex_prompt")
+                self.assertEqual(json.loads(approved.stdout)["dispatch_scope"]["timeout_seconds"], timeout)
+
     def test_noninteractive_flag_and_pipe_cannot_approve(self):
         digest = self.create()
         args = ("grant", "approve", "demo-1", "--sha", digest)

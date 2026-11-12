@@ -13,7 +13,7 @@ from .adapters.agy_print import AgyPrintAdapter
 from .config import _local_path, load_config
 from .context_bundle import bundle_manifest, check_bundle, prepare_bundle, prepare_worktree
 from .ledger import (BRAND_NAME, DISPATCH_SCOPE_FIELDS, READ_ONLY_TEMPLATES, SHA256, SUGGESTION_CARD_TITLE,
-                     GrantLedger, LedgerError, TEMPLATES, valid_id)
+                     GrantLedger, LedgerError, TEMPLATE_TIMEOUTS, TEMPLATES, valid_id)
 from .run_manager import RunManager
 from .verifier import VerificationEvidence, Verifier
 
@@ -114,6 +114,12 @@ def read_card(path, config):
     card.setdefault("ttl_minutes", config.ledger_limits.ttl_minutes)
     if missing := CARD_KEYS - card.keys():
         raise ValueError("派工卡缺少必要欄位：" + ", ".join(sorted(missing)))
+    if "timeout_seconds" not in card and {"workspace_path", "task_sha256"} <= card.keys():
+        templates = card["allowed_templates"]
+        if not isinstance(templates, list) or not templates or any(
+                not isinstance(template, str) or template not in TEMPLATE_TIMEOUTS for template in templates):
+            raise ValueError("派工卡須指定有效模板才能套用預設逾時")
+        card["timeout_seconds"] = min(TEMPLATE_TIMEOUTS[template] for template in templates)
     scope_keys = DISPATCH_SCOPE_FIELDS & card.keys()
     if scope_keys and (scope_keys != DISPATCH_SCOPE_FIELDS or any(card[key] is None for key in scope_keys)):
         raise ValueError("派工卡必須同時指定逾時、工作樹與任務 SHA-256")
@@ -183,6 +189,12 @@ def dispatch_agy(manager, config, args):
     grant = manager.ledger.get_grant(args.grant)
     if grant is None:
         raise LedgerError(10, "找不到有效 Grant")
+    timeout = args.timeout
+    if timeout is None and grant["dispatch_scope_json"] is not None:
+        try:
+            timeout = json.loads(grant["dispatch_scope_json"])["timeout_seconds"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LedgerError(10, "Grant 缺少有效的核准逾時") from exc
     command = adapters["agy_command"]
     # A single executable path relative to the local TOML, or a command on PATH.
     if Path(command).is_absolute() or "/" in command or chr(92) in command:
@@ -200,7 +212,7 @@ def dispatch_agy(manager, config, args):
         adapter, grant_id=args.grant, run_id=args.run_id or f"agy-{uuid4().hex}", repo_root=grant["repo_root"],
         template=args.template, model=args.model, effort=args.effort, task=task,
         workspace=args.workspace, worktree_root=config.values["paths"]["worktree_root"],
-        timeout_s=args.timeout, requirements=requirements,
+        timeout_s=timeout, requirements=requirements,
     )
 
 

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 from shutil import which
+import signal
 import subprocess
 from subprocess import Popen
 from time import monotonic
@@ -214,6 +215,36 @@ def normalize_stdout(raw):
     } | optional
 
 
+AGY_LOG_PREFIX = re.compile(rb"^[IWEF]\d{4}\s+\d\d:\d\d:\d\d\.\d+\s+\d+\s+[^\]\r\n]+\.go:\d+\]\s+")
+AGY_LOG_CONVERSATION = re.compile(rb"Created conversation ([0-9A-Fa-f-]{36})(?:\s|$)")
+AGY_LOG_SEND = re.compile(rb"Sending user message(?:\s|$)")
+AGY_LOG_STREAM = re.compile(rb"(?:URL: https://[^\s?]+/[^\s?]*)?streamGenerateContent(?:\?|\s|$)")
+
+
+def _log_submission(path):
+    """Accept one run-local conversation followed by an outbound CLI log marker."""
+    try:
+        raw = _read(path)
+    except OSError:
+        return None
+    conversation = marker = None
+    for line in raw.splitlines():
+        message = AGY_LOG_PREFIX.sub(b"", line, count=1)
+        if created := AGY_LOG_CONVERSATION.match(message):
+            candidate = _uuid(created[1].decode("ascii"))
+            if candidate is None or conversation not in (None, candidate):
+                return None
+            conversation = candidate
+        elif conversation is not None and marker is None:
+            if AGY_LOG_SEND.match(message):
+                marker = "Sending user message"
+            elif AGY_LOG_STREAM.match(message):
+                marker = "streamGenerateContent"
+    if marker is not None:
+        return {"conversation_id": conversation, "marker": marker, "sha256": sha256(raw).hexdigest()}
+    return None
+
+
 def _response_agrees(response, structured, schema_echo, expected_schema):
     """Allow complete draft objects before the display copy of the structured result."""
     text = response.strip() if response else ""
@@ -254,6 +285,7 @@ class AgyCapture:
     wall_milliseconds: int | None = None
     workspace_changed: bool | None = None
     workspace_after_sha256: str | None = None
+    log_submission: dict | None = None
 
 
 def _check_capture(capture):
@@ -268,6 +300,10 @@ def _check_capture(capture):
             raise LedgerError(20, "Pre-submit receipt must prove the process did not start")
     elif capture.pre_submit_reason is not None:
         raise LedgerError(20, "A started process cannot claim a pre-submit refund")
+    if capture.log_submission is not None and (
+            capture.termination not in ("timeout", "interrupted") or not isinstance(capture.log_submission, dict)
+            or capture.log_submission.keys() != {"conversation_id", "marker", "sha256"}):
+        raise LedgerError(30, "Invalid agy log submission receipt")
     for event in capture.tool_events:
         if (not isinstance(event, dict) or event.keys() != {"type", "name", "status", "exit_code"}
                 or event["type"] != "tool" or not isinstance(event["name"], str) or not event["name"]
@@ -516,7 +552,7 @@ class AgyPrintAdapter:
         return LaunchHandle(plan, process, identity, started_at, clock_started)
 
     def observe(self, handle):
-        """Wait for the process we own. Preserve partial streams on timeouts and interruption."""
+        """Wait locally once until exit or the approved deadline, then seal any log evidence."""
         process = handle.process
         termination = "exited"
         exit_code = None
@@ -524,15 +560,21 @@ class AgyPrintAdapter:
             termination = "not_started" if handle.launch_error == "process_not_started" else "interrupted"
         else:
             try:
-                exit_code = process.wait(timeout=handle.plan.timeout_s)
+                remaining = max(0, handle.clock_started + handle.plan.timeout_s - monotonic())
+                exit_code = process.wait(timeout=remaining)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                termination = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "interrupted"
-                try:
-                    process.kill()
-                except OSError:
-                    if process.poll() is None:
-                        raise
-                exit_code = process.wait(timeout=5)
+                exit_code = process.poll()
+                if exit_code is None:
+                    termination = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "interrupted"
+                    try:
+                        process.kill()
+                    except OSError:
+                        if process.poll() is None:
+                            raise
+                    exit_code = process.wait(timeout=5)
+            if termination == "exited" and (exit_code in (-signal.SIGINT, -signal.SIGTERM)
+                                            or exit_code & 0xFFFFFFFF == 0xC000013A):
+                termination = "interrupted"
         wall_milliseconds = round((monotonic() - handle.clock_started) * 1000)
         directory = self.manager._directory(handle.plan.run_id)
         after = None
@@ -542,17 +584,26 @@ class AgyPrintAdapter:
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
         changed = None if after is None else after != handle.plan.baseline
+        stdout = _read(directory / "agy.stdout.pending")
+        log_submission = None
+        if process is not None and termination in ("timeout", "interrupted"):
+            observed = normalize_stdout(stdout)
+            if not (observed and observed["raw_status"]):
+                log_submission = _log_submission(directory / "agy.cli.log")
         return AgyCapture(
             handle.plan.run_id, handle.plan.task_sha256, sha256(handle.plan.metadata).hexdigest(),
-            _read(directory / "agy.stdout.pending"), _read(directory / "agy.stderr.pending"), exit_code,
+            stdout, _read(directory / "agy.stderr.pending"), exit_code,
             termination=termination, pre_submit_reason=handle.launch_error if termination == "not_started" else None,
             wall_milliseconds=wall_milliseconds, workspace_changed=changed, workspace_after_sha256=after,
+            log_submission=log_submission,
         )
 
     def persist_capture(self, handle, capture):
         """Seal stream hashes before normalization so recovery never needs to relaunch."""
         directory = self.manager._directory(capture.run_id)
         record = asdict(capture)
+        if capture.log_submission is None:
+            record.pop("log_submission")
         record["stdout"] = sha256(capture.stdout).hexdigest()
         record["stderr"] = sha256(capture.stderr).hexdigest()
         record["process"] = handle.process_identity
@@ -607,12 +658,12 @@ class AgyPrintAdapter:
             return "FAILED", tool_reason, None
         if capture.workspace_changed is True and run["template"] != "delegate-implement":
             return "FAILED", "readonly_violation", None
-        submitted = run["conversation_id"] or (
+        submitted = run["conversation_id"] or capture.log_submission or (
             observed and observed["conversation_id"] and (observed["num_turns"] or 0) > 0
         )
         if not submitted:
             return "SUBMISSION_UNKNOWN", "submission_evidence_missing", None
-        if capture.termination == "timeout":
+        if capture.termination == "timeout" or capture.log_submission is not None:
             return "TIMED_OUT", "process_timed_out", None
         if capture.termination != "exited" or capture.exit_code is None:
             return "SUBMISSION_UNKNOWN", "process_completion_unknown", None
@@ -679,6 +730,13 @@ class AgyPrintAdapter:
             observed = normalize_stdout(capture.stdout)
             response = observed["response"] if observed else None
             conversation = observed["conversation_id"] if observed else None
+            log_submission = capture.log_submission
+            if log_submission is not None:
+                if (process_receipt_sha256 is None or (observed and observed["raw_status"])
+                        or _log_submission(directory / "agy.cli.log") != log_submission
+                        or conversation not in (None, log_submission["conversation_id"])):
+                    raise LedgerError(30, "agy log submission differs from the sealed process capture")
+                conversation = log_submission["conversation_id"]
             if conversation and (run["conversation_id"] not in (None, conversation) or db.execute(
                 "SELECT 1 FROM runs WHERE adapter = ? AND conversation_id = ? AND run_id <> ?",
                 (self.id, conversation, run_id),
@@ -723,6 +781,8 @@ class AgyPrintAdapter:
                 "classification": state, "reason": reason,
                 "result_sha256": result_hash,
             }
+            if log_submission is not None:
+                receipt["log_submission"] = log_submission
             events = ({"type": "worker_exit", **receipt}, *capture.tool_events)
             journal = b"".join(_bytes(event | {"run_id": run_id}) + b"\n" for event in events)
             receipt["events_sha256"] = sha256(journal).hexdigest()
@@ -790,8 +850,12 @@ class AgyPrintAdapter:
                                       evidence=evidence, conversation_id=conversation)
             current = run["state"]
         if state == "TIMED_OUT":
-            if current == "RUNNING":
-                return manager._change(db, run, state, reason=reason, evidence=evidence, exit_code=exit_code)
+            if current == "SUBMISSION_UNKNOWN" and conversation is not None:
+                run = manager._change(db, run, "RUNNING", reason="agy_conversation_observed",
+                                      evidence=evidence, conversation_id=conversation)
+            if run["state"] == "RUNNING":
+                return manager._change(db, run, state, reason=reason, evidence=evidence,
+                                       conversation_id=conversation, exit_code=exit_code)
             return run
         if state == "FAILED" and current in ("SUBMISSION_UNKNOWN", "TIMED_OUT"):
             return manager._change(db, run, state, reason=reason, evidence=evidence,
