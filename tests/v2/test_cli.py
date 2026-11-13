@@ -439,7 +439,17 @@ class SkillInstallationTests(unittest.TestCase):
                 expected = (self.source / relative).read_bytes()
                 self.assertEqual((self.codex_skill / relative).read_bytes(), expected)
                 self.assertEqual((self.claude_skill / relative).read_bytes(), expected)
-        self.run_script("doctor.ps1")
+        # Hosted Windows CI uses Server, which Doctor correctly rejects as a desktop host.
+        server = sys.getwindowsversion().product_type in (2, 3)
+        output = self.run_script("doctor.ps1", expected_code=1 if server else 0)
+        failures = [line for line in output.splitlines() if line.startswith("[失敗]")]
+        if server:
+            self.assertEqual(len(failures), 1, output)
+            self.assertTrue(failures[0].startswith("[失敗] Windows 11"), output)
+        else:
+            self.assertEqual(failures, [], output)
+        self.assertIn("[通過] Codex 使用者技能", output)
+        self.assertIn("[通過] Claude Code 使用者技能", output)
 
     def test_doctor_reports_a_missing_reference_and_an_inconsistent_skill(self):
         self.run_script("setup.ps1")

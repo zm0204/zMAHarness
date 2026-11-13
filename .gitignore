@@ -1,7 +1,11 @@
 *
 !/.gitignore
 !/README.md
+!/LICENSE
 !/DISCLAIMER.md
+!/.github/
+!/.github/workflows/
+!/.github/workflows/test.yml
 !/ROLES.md
 !/setup.ps1
 !/doctor.ps1
