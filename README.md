@@ -5,6 +5,8 @@ It runs on Windows 11 with Git, PowerShell, Python 3.11+, and either Codex Deskt
 The Gemini worker requires Antigravity CLI (`agy`) signed in with a personal Google AI Pro subscription.\
 The project is licensed under the MIT License.
 
+zMAHarness 是一套 Skill 加上 CLI 工具，讓你的 AI Agent（Codex 或 Claude Code）在你同意後找其他模型協助審查、提供第二意見或研究，並由主控自己驗收結果。
+
 zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設 Codex Sol High）平常自行完成任務。遇到獨立審查有幫助的關鍵變更時，主控會提出協作建議，等你在對話中同意後才派工。主控會獨立核對 Worker 的結果，決定採納哪些建議，並繼續完成原任務。
 
 ## 適用環境
@@ -18,7 +20,7 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 
 | Worker | 驗收範圍 |
 | --- | --- |
-| Gemini | 已實測用 `agy-print` 派送 Flash Low 的 Context-Bundle Review，並用保存的真實收據完成離線重收集與獨立驗收。該次審查建議未獲採納。其他模型、思考程度及 Disposable Worktree 的真實端到端流程尚未驗收。 |
+| Gemini | **真實派工**：T5 觸發 BatchTable 跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板及 Disposable Worktree 的真實端到端流程尚未驗收。 |
 | Claude | Sonnet、Opus 已列為 `agy-print` 的候選模型，真實 Worker 派工尚未驗收。 |
 | Codex | 已驗證巢狀 CLI 的 JSONL、Thread ID 和 UTF-8。該次工具操作遭政策拒絕，正式 `codex-exec` Adapter 尚未接入或驗收。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |
