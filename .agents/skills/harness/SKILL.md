@@ -40,8 +40,13 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
 這類任務的選項 2 建議 `gemini-4-argon-high · high`，選項 3 沿用備選規則。使用者手打指定時不受此限。
 
-依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。核准後嚴禁自動從
-Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
+依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。
+
+- **Context-Bundle**：只用於 1～2 個核心檔案，且完整檔案加上任務指示封裝後，總大小不超過本機 TOML 的 `limits.max_task_bytes`（預設 32 KB）。
+- **Disposable Worktree**：超過 2 個檔案、單檔太大、封裝後超過上限，或需查閱關聯檔案時使用。卡片須列出 Worker 可查閱的範圍。
+- 嚴禁為了符合上限而截斷或刪減檔案。
+
+核准後嚴禁自動從 Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
 
 選項 2 顯示與卡片相同的建議模型。若選項 2 是 Argon 或 Claude，選項 3 用
 `gemini-3.8-flash-low · low` 供節省額度。若選項 2 是 Flash Low 或 Flash Medium，
