@@ -22,15 +22,30 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
 以下五項資訊、三個選項與「或自行輸入回覆」放在同一頁，一步完成，不翻頁。
 
 - **觸發原因**　例如 `T2 · 高風險程式修改` 或 `T5 · 使用者主動要求`。
-- **建議模型**　顯示預設模型及思考程度 `gemini-3.8-flash-low · low`。
+- **建議模型**　顯示 Sol 依本次任務類型、觸發原因及難度選定的模型與 effort。
 - **任務與範圍**　顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
 - **授權限制**　顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。
-- **為什麼建議協作？**　一至兩句白話說明預期收益
+- **為什麼建議協作？**　用一至兩句白話說明預期收益及選擇該模型的原因。
+
+依下表選擇模型。T4、T5 也依實際任務的複雜度與所需視角判斷。
+
+| 任務 | 建議模型與 effort |
+| --- | --- |
+| T3 大量資料整理／研究，或小型常規檢查 | `gemini-3.8-flash-low · low`。需要整合較多線索時用 `gemini-3.8-flash-medium · medium`。 |
+| T2 核心邏輯／跨模組高風險 Review | `gemini-4-argon-medium · medium`。跨模組交互複雜時用 `gemini-4-argon-high · high`。 |
+| T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `claude-sonnet-5-5-high · high`、`claude-opus-5-5-high · high` 或 `gemini-4-argon-high · high`，依所需視角與深度選擇。 |
+
+依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。核准後嚴禁自動從
+Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
+
+選項 2 顯示與卡片相同的建議模型。若選項 2 是 Argon 或 Claude，選項 3 用
+`gemini-3.8-flash-low · low` 供節省額度。若選項 2 是 Flash Low 或 Flash Medium，
+選項 3 用 `gemini-4-argon-high · high` 供一鍵升級。
 
 1. `不同意（由 Sol 自己繼續完成）`
-2. `繼續協作（預設：gemini-3.8-flash-low · low）`
-3. `繼續協作（改用高階：gemini-4-argon-high · high）`
+2. `繼續協作（Sol 建議：<本次建議模型 · effort>）`
+3. `繼續協作（改用備選：<本次備選模型 · effort>）`
 
 **T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
 點選或手打回覆。初始的 T5 請求或 `$harness` 呼叫只觸發提議。即使初始請求已指定模型與
@@ -41,9 +56,9 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
 - **不同意**　Sol 立即在本地繼續原任務，同一問題不再提議或追問。若已有待核准卡片，
   在收到回覆後以 `mah card reject <card_id>` 記錄拒絕。寫入失敗時仍繼續原任務。
 - **點選繼續協作**　採用選項標明的模型與 effort，維持卡片上的任務、範圍和授權限制。
-- **手打覆寫**　把該卡片中明確指定模型、effort 或檔案範圍的回覆視為同意協作，例如
-  「換 4argon」、「用 medium」或「只看 io.py」。未指定的欄位沿用卡片。依本機 `agy models`
-  實測支援的模型 ID 對齊尾綴與 `--effort`，再用最終組合與範圍建立單次 Card 與 Grant。
+- **手打覆寫**　使用者可在自由輸入框指定任一可用模型、effort 或縮小檔案範圍，例如
+  「換 4argon」、「用 medium」或「只看 io.py」。明確覆寫視為同意協作，其餘欄位沿用卡片。
+  依本機 `agy models` 支援的模型 ID 對齊尾綴與 `--effort`，再用最終組合與範圍建立單次 Card 與 Grant。
 
 | 模型 | `low` | `medium` | `high` |
 | --- | --- | --- | --- |
@@ -56,9 +71,8 @@ Sol 平常直接完成原任務。一般工作不預載 Harness，也不為了�
 只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，
 使用 `gemini-4-argon-medium` 搭配 `--effort medium`。
 
-若別名、effort 或檔名有歧義，先用單頁卡片澄清再等待回覆。若縮小後的範圍無法由原模式
-遵守，採用能維持該範圍的模式。無法維持時回報限制，擴大可讀範圍前須重新提議。
-選定模型不可用時回報具體原因，由 Sol 繼續本地工作。
+若別名、effort 或檔名有歧義，先用單頁卡片澄清再等待回覆。若原模式無法維持縮小後的範圍，
+先提出符合新範圍的模式並等待核准。選定模型不可用時回報具體原因，由 Sol 繼續本地工作。
 
 ## 背景派工與驗收
 
@@ -75,7 +89,13 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 `codex-exec` 等 CLI Adapter 也遵循相同原則。實際模型和 effort 以卡片回覆確認的組合為準，日常派工略過前後額度查詢。
 `agy-print` 的會話設定固定關閉 AI Credits。
 
-1. 依 Worker 需要的檔案與已同意的範圍選擇模式。
+收到卡片的同意回覆後，用**單一 PowerShell 工具呼叫**執行步驟 1～3。收到派工結果並完成
+獨立查核後，再用**單一 PowerShell 工具呼叫**寫入證據、驗收與採納。兩段腳本開頭都設
+`$ErrorActionPreference = 'Stop'`，每次執行 `python -B -m mah` 後立即檢查 `$LASTEXITCODE`。
+`dispatch` 回傳 `30` 時先讀輸出的狀態及原因，只有 `COLLECTING` 且已有可核對的結果才交給 Sol 查核。
+其他非零結果停止後續命令並保留收據。
+
+1. 依卡片核准的模式及範圍準備資料。
    - **Context-Bundle 優先**。1～2 個核心檔案可完整封裝在 `max_task_bytes`（預設 32 KB）
      內時，用 `mah bundle create --repo <正式專案根目錄>` 指定完整的真實檔案。嚴禁為了
      符合上限而手動刪減檔案、截取片段或建立臨時片段儲存庫。排除私人資料和憑證，
@@ -102,6 +122,8 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
    `result_sha256`、`confirmed` 與 `workspace_changed`。Context-Bundle 另帶 `bundle_manifest_sha256`。
    依模板另填 `reviewed_findings` 的查核數量、已獨立執行的 `experiments` 字串陣列，
    或 `checked_citations` 三元組陣列（例如 `[["來源.md","L1-L3","主張"]]`）。
-   用 `verify <run_id> --evidence-file <證據檔>` 驗收。
-5. 依獨立查核用 `accept` 或 `reject-result` 記錄採納決定。引用的行號與主張由 Sol 核對。
+   在驗收腳本中寫入證據檔後，執行 `mah verify <run_id> --evidence-file <證據檔>`。驗收未通過時
+   立即停止，不執行採納命令。
+5. 驗收通過後，在同一驗收腳本依獨立查核用 `mah accept` 或 `mah reject-result` 記錄採納決定。
+   引用的行號與主張由 Sol 核對。
    將有效建議整合回原任務，由 Sol 繼續完成工作，最後回報成果。
