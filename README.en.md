@@ -101,4 +101,14 @@ python -B -m unittest discover -s tests/v2 -q
 
 For V1 file handoff and interruption recovery rules, see the [role rules](ROLES.md) and the [V1 inventory](docs/v2/V1_INVENTORY.md). Keep local settings, SQLite, task records, and private verification reports on your machine. The Git whitelist only includes project code, general documentation, and de-identified test data.
 
+## How this was built
+
+The author defined the requirements, architecture, and acceptance criteria, and built the project in collaboration with multiple AI models:
+
+- **Codex (GPT)**: main implementation and tests.
+- **Claude**: part of the implementation, specification design, and independent acceptance review.
+- **Gemini**: architecture review, and real review dispatches as a worker.
+
+Every phase was merged only after independent review and test-based acceptance. The project itself practices zMAHarness's principles: the controller stays responsible, collaboration requires consent, and results are verified independently.
+
 License: MIT, see [LICENSE](LICENSE). Please also see [DISCLAIMER.md](DISCLAIMER.md).

@@ -101,4 +101,14 @@ python -B -m unittest discover -s tests/v2 -q
 
 V1 的檔案交接與中斷復原規則見 [角色規範](ROLES.md) 和 [V1 盤點](docs/v2/V1_INVENTORY.md)。請讓本機設定、SQLite、任務紀錄及私人驗證報告留在本機。Git 白名單只納入專案程式、通用文件與已去識別化的測試資料。
 
+## 開發方式
+
+本專案由作者負責需求定義、架構設計與驗收標準，並以多個 AI 協作實作：
+
+- **Codex（GPT）**：主要實作與測試。
+- **Claude**：部分實作、規格設計與獨立驗收。
+- **Gemini**：架構審查，並以 Worker 身分參與真實派工審查。
+
+每個階段都經過獨立審查與測試驗收後才合併。本專案本身就是 zMAHarness「主控負責到底、協作需經同意、結果需獨立驗收」理念的實踐。
+
 授權：MIT，見 [LICENSE](LICENSE)。同時請參閱 [DISCLAIMER.md](DISCLAIMER.md)。
