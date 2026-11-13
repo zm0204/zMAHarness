@@ -65,3 +65,22 @@ function Get-HarnessSkillFiles {
         $_.FullName.Substring($SourceRoot.Length + 1)
     }
 }
+
+function Get-HarnessLegacySkillState {
+    # 舊版技能名稱為 harness。只有 frontmatter 為 name: harness 且內文含 zMAHarness 時才視為本專案安裝。
+    param([string]$SkillRoot)
+
+    if (-not [IO.Directory]::Exists($SkillRoot)) { return 'Absent' }
+    $attributes = [IO.File]::GetAttributes($SkillRoot)
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) { return 'Foreign' }
+    $skillFile = Join-Path $SkillRoot 'SKILL.md'
+    if (-not [IO.File]::Exists($skillFile)) { return 'Foreign' }
+    try { $text = [IO.File]::ReadAllText($skillFile, [Text.Encoding]::UTF8) }
+    catch { return 'Foreign' }
+    $match = [regex]::Match($text, '\A﻿?---\r?\n(.*?)\r?\n---(\r?\n|\z)', 'Singleline')
+    if (-not $match.Success) { return 'Foreign' }
+    $names = @($match.Groups[1].Value -split '\r?\n' | Where-Object { $_ -cmatch '^name:' })
+    if ($names.Count -ne 1 -or $names[0] -cnotmatch '^name:[ \t]*harness[ \t]*$') { return 'Foreign' }
+    if (-not $text.Contains('zMAHarness')) { return 'Foreign' }
+    return 'Project'
+}

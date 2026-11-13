@@ -9,7 +9,7 @@ function Install-ZMAHarness {
         throw '需要 Windows 使用者的 LOCALAPPDATA 與 USERPROFILE。'
     }
     $pythonPath = Get-HarnessPathPython
-    $skillSource = Join-Path $PSScriptRoot '.agents/skills/harness'
+    $skillSource = Join-Path $PSScriptRoot '.agents/skills/zmaharness'
     $skillFiles = @(Get-HarnessSkillFiles $skillSource)
     $configSource = Join-Path $PSScriptRoot 'harness.local.example.toml'
     foreach ($source in @($configSource, (Join-Path $PSScriptRoot 'mah/__main__.py'))) {
@@ -64,7 +64,7 @@ finally:
         Write-Output '[提示] 舊設定及資料保留。預設使用新設定，既有 Run 可用 --config 指向舊設定繼續處理。'
     }
 
-    foreach ($relativeRoot in @('.agents/skills/harness', '.claude/skills/harness')) {
+    foreach ($relativeRoot in @('.agents/skills/zmaharness', '.claude/skills/zmaharness')) {
         $skillRoot = Join-Path $env:USERPROFILE $relativeRoot
         foreach ($file in $skillFiles) {
             $destination = Join-Path $skillRoot $file
@@ -72,6 +72,17 @@ finally:
             [IO.File]::Copy((Join-Path $skillSource $file), $destination, $true)
         }
         Write-Output "[通過] 已安裝使用者技能：$skillRoot"
+    }
+    # 新技能安裝完成後才遷移舊版 harness 技能；非本專案的同名技能一律保留。
+    foreach ($relativeRoot in @('.agents/skills/harness', '.claude/skills/harness')) {
+        $legacyRoot = Join-Path $env:USERPROFILE $relativeRoot
+        switch (Get-HarnessLegacySkillState $legacyRoot) {
+            'Project' {
+                Remove-Item -LiteralPath $legacyRoot -Recurse -Force
+                Write-Output "[通過] 已移除本專案的舊版技能：$legacyRoot"
+            }
+            'Foreign' { Write-Output "[警告] 保留非本專案的 harness 技能，未做任何變更：$legacyRoot" }
+        }
     }
     Write-Output "[通過] zMAHarness 本機設定：$v2Config"
     Write-Output '[通過] 已註冊 Python 使用者模組路徑（zmaharness.pth）。'

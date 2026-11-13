@@ -2,6 +2,7 @@
 !/.gitignore
 !/.gitattributes
 !/README.md
+!/README.en.md
 !/LICENSE
 !/DISCLAIMER.md
 !/.github/
@@ -61,9 +62,9 @@
 !/tests/v2/test_context_bundle.py
 !/.agents/
 !/.agents/skills/
-!/.agents/skills/harness/
-!/.agents/skills/harness/SKILL.md
-!/.agents/skills/harness/references/
-!/.agents/skills/harness/references/dispatch.md
+!/.agents/skills/zmaharness/
+!/.agents/skills/zmaharness/SKILL.md
+!/.agents/skills/zmaharness/references/
+!/.agents/skills/zmaharness/references/dispatch.md
 !/mah/window_approval.py
 !/tests/v2/test_window_approval.py

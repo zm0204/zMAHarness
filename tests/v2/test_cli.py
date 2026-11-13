@@ -409,7 +409,7 @@ class SkillInstallationTests(unittest.TestCase):
             dest = self.engine / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / name, dest)
-        self.relative_skill = Path(".agents/skills/harness")
+        self.relative_skill = Path(".agents/skills/zmaharness")
         self.source = self.engine / self.relative_skill
         shutil.copytree(REPO / self.relative_skill, self.source)
         shutil.copytree(REPO / "mah", self.engine / "mah", ignore=shutil.ignore_patterns("__pycache__"))
@@ -417,7 +417,9 @@ class SkillInstallationTests(unittest.TestCase):
         for directory in (profile, local, roaming):
             directory.mkdir()
         self.codex_skill = profile / self.relative_skill
-        self.claude_skill = profile / ".claude/skills/harness"
+        self.claude_skill = profile / ".claude/skills/zmaharness"
+        # The pre-rename install locations that setup.ps1 migrates.
+        self.legacy_skills = (profile / ".agents/skills/harness", profile / ".claude/skills/harness")
         self.env = os.environ | {"USERPROFILE": str(profile), "LOCALAPPDATA": str(local), "APPDATA": str(roaming),
                                  "PYTHONUSERBASE": str(self.root / "user-site")}
         for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE", "VIRTUAL_ENV"):
@@ -459,3 +461,72 @@ class SkillInstallationTests(unittest.TestCase):
         self.assertIn("[失敗] Claude Code 使用者技能", output)
         self.assertIn("dispatch.md", output)
         self.assertIn("[失敗] Codex 使用者技能", output)
+
+    def write_legacy_skill(self, root, skill_text):
+        (root / "references").mkdir(parents=True)
+        (root / "SKILL.md").write_bytes(skill_text.encode("utf-8"))
+        (root / "references/dispatch.md").write_bytes("## 背景派工與驗收\n".encode("utf-8"))
+
+    def assert_doctor_passes(self):
+        # Hosted Windows CI uses Server, which Doctor correctly rejects as a desktop host.
+        server = sys.getwindowsversion().product_type in (2, 3)
+        output = self.run_script("doctor.ps1", expected_code=1 if server else 0)
+        failures = [line for line in output.splitlines() if line.startswith("[失敗]")]
+        expected = 1 if server else 0
+        self.assertEqual(len(failures), expected, output)
+        return output
+
+    def test_setup_removes_this_projects_legacy_harness_skill(self):
+        project_skill = ("﻿---\r\nname: harness\r\ndescription: 用 zMAHarness 提議唯讀分析。\r\n---\r\n\r\n"
+                         "# zMAHarness 協作\r\n")
+        for root in self.legacy_skills:
+            self.write_legacy_skill(root, project_skill)
+        output = self.run_script("setup.ps1")
+        for root in self.legacy_skills:
+            with self.subTest(root=root):
+                self.assertFalse(root.exists(), output)
+                self.assertIn(f"[通過] 已移除本專案的舊版技能：{root}", output)
+        self.assertTrue((self.codex_skill / "SKILL.md").is_file())
+        self.assertTrue((self.claude_skill / "references/dispatch.md").is_file())
+        self.assertNotIn("舊版技能", self.assert_doctor_passes())
+
+    def test_setup_keeps_foreign_harness_skills_untouched(self):
+        foreign = {
+            # Same name, but not this project.
+            self.legacy_skills[0]: "---\nname: harness\ndescription: Someone else's test harness.\n---\n\n# Harness\n",
+            # Mentions zMAHarness, but the frontmatter name is different.
+            self.legacy_skills[1]: "---\nname: harness-tools\ndescription: Notes about zMAHarness.\n---\n",
+        }
+        for root, text in foreign.items():
+            self.write_legacy_skill(root, text)
+        before = {path: path.read_bytes() for root in foreign for path in root.rglob("*") if path.is_file()}
+        output = self.run_script("setup.ps1")
+        after = {path: path.read_bytes() for root in foreign for path in root.rglob("*") if path.is_file()}
+        self.assertEqual(after, before)
+        for root in foreign:
+            self.assertIn(f"[警告] 保留非本專案的 harness 技能，未做任何變更：{root}", output)
+        self.assertNotIn("已移除", output)
+        self.assertTrue((self.codex_skill / "SKILL.md").is_file())
+        self.assertTrue((self.claude_skill / "SKILL.md").is_file())
+        self.assertNotIn("舊版技能", self.assert_doctor_passes())
+
+    def test_setup_without_legacy_skill_installs_normally(self):
+        output = self.run_script("setup.ps1")
+        self.assertNotIn("[警告]", output)
+        self.assertNotIn("舊版技能", output)
+        for root in self.legacy_skills:
+            self.assertFalse(root.exists())
+        for target in (self.codex_skill, self.claude_skill):
+            self.assertEqual((target / "SKILL.md").read_bytes(), (self.source / "SKILL.md").read_bytes())
+
+    def test_doctor_warns_but_passes_when_project_legacy_skill_remains(self):
+        self.run_script("setup.ps1")
+        self.write_legacy_skill(self.legacy_skills[1], "---\nname: harness\n---\n\n# zMAHarness 協作\n")
+        output = self.assert_doctor_passes()
+        self.assertIn(f"[警告] 舊版技能：本專案的舊版 harness 技能仍在：{self.legacy_skills[1]}", output)
+        self.assertNotIn(str(self.legacy_skills[0]), output)
+        self.assertTrue(self.legacy_skills[1].exists())
+
+    def test_skill_frontmatter_uses_the_new_name(self):
+        text = (self.source / "SKILL.md").read_text(encoding="utf-8")
+        self.assertRegex(text, r"\A---\r?\nname: zmaharness\r?\n")

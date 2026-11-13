@@ -1,5 +1,5 @@
 ---
-name: harness
+name: zmaharness
 description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarness 提議唯讀分析，依使用者的對話決定派工、獨立驗收並繼續原任務。
 ---
 
@@ -14,11 +14,11 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | T2 | 變更觸及 `t2_risky_paths` 且差異行數達 `t2_risky_diff_lines` |
 | T3 | 預計讀取達 `t3_read_files` 或 `t3_read_kb`，預期產出很小 |
 | T4 | 既有 Codex 額度快照達 `t4_codex_used_percent`，且有低成本驗收方法。缺快照時不用 T4 |
-| T5 | 使用者主動要求協作，或呼叫 `$harness`（Codex）/`/harness`（Claude Code） |
+| T5 | 使用者主動要求協作，或呼叫 `$zmaharness`（Codex）/`/zmaharness`（Claude Code） |
 
 ## 對話內提議
 
-卡片與回覆一律使用使用者提問的語言。`zMAHarness`、模型 ID 與指令名（`$harness`、`/harness`、`mah ...`）保留原文。
+卡片與回覆一律使用使用者提問的語言。`zMAHarness`、模型 ID 與指令名（`$zmaharness`、`/zmaharness`、`mah ...`）保留原文。
 下方標題與選項為中文範本，翻譯時須保留語意與順序。中文環境使用「【zMAHarness 協作建議】」，
 其他語言使用對應翻譯，例如英文「[zMAHarness Collaboration Proposal]」。
 
@@ -78,7 +78,7 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 3. `繼續協作（改用備選：<本次備選模型 · effort>）`
 
 **T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
-點選或手打回覆。初始的 T5 請求或 `$harness`／`/harness` 呼叫只觸發提議。即使初始請求已指定模型與
+點選或手打回覆。初始的 T5 請求或 `$zmaharness`／`/zmaharness` 呼叫只觸發提議。即使初始請求已指定模型與
 檔案，也不得在顯示卡片的同一輪執行 `card create`、`grant approve` 或 `dispatch`。
 只有收到該卡片的回覆後，才能在下一輪依該回覆進行授權與派工。原生互動工具不可用時，
 回報限制並由主控 Agent 本地繼續原任務。Card ID、雜湊、Grant、工作目錄及證據檔留在背景。

@@ -260,10 +260,10 @@ try {
 }
 catch { Report-Check '失敗' 'agy 執行檔' $_.Exception.Message }
 
-$skillSource = Join-Path $PSScriptRoot '.agents/skills/harness'
+$skillSource = Join-Path $PSScriptRoot '.agents/skills/zmaharness'
 $skillTargets = [ordered]@{
-    'Codex 使用者技能' = '.agents/skills/harness'
-    'Claude Code 使用者技能' = '.claude/skills/harness'
+    'Codex 使用者技能' = '.agents/skills/zmaharness'
+    'Claude Code 使用者技能' = '.claude/skills/zmaharness'
 }
 foreach ($name in $skillTargets.Keys) {
     try {
@@ -279,6 +279,18 @@ foreach ($name in $skillTargets.Keys) {
         Report-Check '通過' $name $skillRoot
     }
     catch { Report-Check '失敗' $name $_.Exception.Message }
+}
+
+if ($env:USERPROFILE) {
+    foreach ($relativeRoot in @('.agents/skills/harness', '.claude/skills/harness')) {
+        $legacyRoot = Join-Path $env:USERPROFILE $relativeRoot
+        try {
+            if ((Get-HarnessLegacySkillState $legacyRoot) -eq 'Project') {
+                Report-Check '警告' '舊版技能' "本專案的舊版 harness 技能仍在：$legacyRoot。重新執行 setup.ps1 可移除。"
+            }
+        }
+        catch { Report-Check '警告' '舊版技能' "無法檢查 ${legacyRoot}：$($_.Exception.Message)" }
+    }
 }
 
 if ($script:Failed) { exit 1 }
