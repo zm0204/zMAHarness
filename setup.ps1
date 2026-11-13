@@ -9,9 +9,10 @@ function Install-ZMAHarness {
         throw '需要 Windows 使用者的 LOCALAPPDATA 與 USERPROFILE。'
     }
     $pythonPath = Get-HarnessPathPython
-    $skillSource = Join-Path $PSScriptRoot '.agents/skills/harness/SKILL.md'
+    $skillSource = Join-Path $PSScriptRoot '.agents/skills/harness'
+    $skillFiles = @(Get-HarnessSkillFiles $skillSource)
     $configSource = Join-Path $PSScriptRoot 'harness.local.example.toml'
-    foreach ($source in @($skillSource, $configSource, (Join-Path $PSScriptRoot 'mah/__main__.py'))) {
+    foreach ($source in @($configSource, (Join-Path $PSScriptRoot 'mah/__main__.py'))) {
         if (-not [IO.File]::Exists($source)) { throw "安裝來源缺少檔案：$source" }
     }
 
@@ -63,12 +64,17 @@ finally:
         Write-Output '[提示] 舊設定及資料保留。預設使用新設定，既有 Run 可用 --config 指向舊設定繼續處理。'
     }
 
-    $skillRoot = Join-Path $env:USERPROFILE '.agents/skills/harness'
-    $null = [IO.Directory]::CreateDirectory($skillRoot)
-    [IO.File]::Copy($skillSource, (Join-Path $skillRoot 'SKILL.md'), $true)
+    foreach ($relativeRoot in @('.agents/skills/harness', '.claude/skills/harness')) {
+        $skillRoot = Join-Path $env:USERPROFILE $relativeRoot
+        foreach ($file in $skillFiles) {
+            $destination = Join-Path $skillRoot $file
+            $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+            [IO.File]::Copy((Join-Path $skillSource $file), $destination, $true)
+        }
+        Write-Output "[通過] 已安裝使用者技能：$skillRoot"
+    }
     Write-Output "[通過] zMAHarness 本機設定：$v2Config"
     Write-Output '[通過] 已註冊 Python 使用者模組路徑（zmaharness.pth）。'
-    Write-Output "[通過] 已安裝 Codex 使用者技能：$skillRoot"
 }
 
 try {

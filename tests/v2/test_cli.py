@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -11,7 +12,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
-from mah.config import default_config_path, load_config
+from mah.config import ConfigError, default_config_path, load_config
 from mah.fake_adapter import FakeAdapter
 from mah.ledger import GrantLedger, LedgerError
 from mah.run_manager import RunManager
@@ -368,6 +369,24 @@ class CliTests(unittest.TestCase):
             settings.write('\n[defaults.review]\nadapter = "codex-exec"\n')
         self.assertEqual(load_config(self.config).values["defaults"]["review"]["model"], "")
 
+    def test_controller_config_defaults_and_partial_override(self):
+        defaults = {"light_models": [], "suggested_controller": "Codex Sol High"}
+        self.assertEqual(load_config(self.config).values["controller"], defaults)
+        self.config.write_text('[controller]\nlight_models = ["gpt-5.6-luna"]\n', encoding="utf-8")
+        self.assertEqual(load_config(self.config).values["controller"],
+                         defaults | {"light_models": ["gpt-5.6-luna"]})
+        self.config.write_text('[controller]\nsuggested_controller = "Claude Code"\n', encoding="utf-8")
+        self.assertEqual(load_config(self.config).values["controller"],
+                         defaults | {"suggested_controller": "Claude Code"})
+
+    def test_controller_config_rejects_invalid_types_and_empty_name(self):
+        for setting in ('light_models = "gpt-5.6-luna"', 'light_models = [1]', 'light_models = [" "]',
+                        'suggested_controller = false', 'suggested_controller = ""', 'suggested_controller = "  "'):
+            with self.subTest(setting=setting):
+                self.config.write_text(f"[controller]\n{setting}\n", encoding="utf-8")
+                with self.assertRaisesRegex(ConfigError, r"controller\."):
+                    load_config(self.config)
+
     def test_duplicate_card_id_and_disabled_adapter(self):
         with self.config.open("a", encoding="utf-8") as settings:
             settings.write('\n[adapters]\nenabled = ["codex-exec", "gui-terra"]\n')
@@ -376,3 +395,57 @@ class CliTests(unittest.TestCase):
         self.check(14, "card", "create", "--file", self.card("other", allowed_targets=[
             {"adapter": "agy-print", "model": "synthetic", "effort_max": "low"}
         ]))
+
+
+@unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "requires Windows PowerShell")
+class SkillInstallationTests(unittest.TestCase):
+    def setUp(self):
+        fixture = TemporaryDirectory(prefix="mah-skill-", dir=REPO.parent)
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        self.engine = self.root / "engine"
+        for name in ("setup.ps1", "doctor.ps1", "harness-config.ps1", "harness.local.example.toml",
+                     "config/defaults.json", "config/local.example.json"):
+            dest = self.engine / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / name, dest)
+        self.relative_skill = Path(".agents/skills/harness")
+        self.source = self.engine / self.relative_skill
+        shutil.copytree(REPO / self.relative_skill, self.source)
+        shutil.copytree(REPO / "mah", self.engine / "mah", ignore=shutil.ignore_patterns("__pycache__"))
+        profile, local, roaming = (self.root / name for name in ("profile", "local", "roaming"))
+        for directory in (profile, local, roaming):
+            directory.mkdir()
+        self.codex_skill = profile / self.relative_skill
+        self.claude_skill = profile / ".claude/skills/harness"
+        self.env = os.environ | {"USERPROFILE": str(profile), "LOCALAPPDATA": str(local), "APPDATA": str(roaming),
+                                 "PYTHONUSERBASE": str(self.root / "user-site")}
+        for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE", "VIRTUAL_ENV"):
+            self.env.pop(name, None)
+
+    def run_script(self, name, expected_code=0):
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-Command",
+             f"[Console]::OutputEncoding = [Text.Encoding]::UTF8; & ./{name}; exit $LASTEXITCODE"],
+            cwd=self.engine, env=self.env, capture_output=True, encoding="utf-8", errors="replace", timeout=45,
+        )
+        self.assertEqual(result.returncode, expected_code, (result.stdout, result.stderr))
+        return result.stdout
+
+    def test_setup_installs_both_skill_trees_including_dispatch_reference(self):
+        self.run_script("setup.ps1")
+        for relative in ("SKILL.md", "references/dispatch.md"):
+            with self.subTest(file=relative):
+                expected = (self.source / relative).read_bytes()
+                self.assertEqual((self.codex_skill / relative).read_bytes(), expected)
+                self.assertEqual((self.claude_skill / relative).read_bytes(), expected)
+        self.run_script("doctor.ps1")
+
+    def test_doctor_reports_a_missing_reference_and_an_inconsistent_skill(self):
+        self.run_script("setup.ps1")
+        (self.claude_skill / "references/dispatch.md").unlink()
+        (self.codex_skill / "SKILL.md").write_bytes(b"different skill")
+        output = self.run_script("doctor.ps1", expected_code=1)
+        self.assertIn("[失敗] Claude Code 使用者技能", output)
+        self.assertIn("dispatch.md", output)
+        self.assertIn("[失敗] Codex 使用者技能", output)

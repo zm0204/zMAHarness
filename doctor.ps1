@@ -260,19 +260,26 @@ try {
 }
 catch { Report-Check '失敗' 'agy 執行檔' $_.Exception.Message }
 
-$skillPath = $null
-if ($env:USERPROFILE) { $skillPath = Join-Path $env:USERPROFILE '.agents/skills/harness/SKILL.md' }
-try {
-    $sourceSkill = Join-Path $PSScriptRoot '.agents/skills/harness/SKILL.md'
-    if (-not $skillPath -or -not [IO.File]::Exists($skillPath)) { throw '請執行 setup.ps1 安裝 Codex 使用者技能。' }
-    $installedSkill = [Convert]::ToBase64String([IO.File]::ReadAllBytes($skillPath))
-    $expectedSkill = [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourceSkill))
-    if ($installedSkill -cne $expectedSkill) {
-        throw '已安裝的技能與此副本不同，請重新執行 setup.ps1。'
-    }
-    Report-Check '通過' 'Codex 使用者技能' $skillPath
+$skillSource = Join-Path $PSScriptRoot '.agents/skills/harness'
+$skillTargets = [ordered]@{
+    'Codex 使用者技能' = '.agents/skills/harness'
+    'Claude Code 使用者技能' = '.claude/skills/harness'
 }
-catch { Report-Check '失敗' 'Codex 使用者技能' $_.Exception.Message }
+foreach ($name in $skillTargets.Keys) {
+    try {
+        if (-not $env:USERPROFILE) { throw '找不到 USERPROFILE。' }
+        $skillRoot = Join-Path $env:USERPROFILE $skillTargets[$name]
+        foreach ($file in @(Get-HarnessSkillFiles $skillSource)) {
+            $installed = Join-Path $skillRoot $file
+            if (-not [IO.File]::Exists($installed)) { throw "缺少 $file，請重新執行 setup.ps1。" }
+            $actual = [Convert]::ToBase64String([IO.File]::ReadAllBytes($installed))
+            $expected = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $skillSource $file)))
+            if ($actual -cne $expected) { throw "$file 與此副本不同，請重新執行 setup.ps1。" }
+        }
+        Report-Check '通過' $name $skillRoot
+    }
+    catch { Report-Check '失敗' $name $_.Exception.Message }
+}
 
 if ($script:Failed) { exit 1 }
 Write-Output '已完成可自動檢查的項目。標為「需人工驗證」的項目仍待確認。'

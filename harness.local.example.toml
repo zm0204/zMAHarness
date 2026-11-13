@@ -16,6 +16,10 @@ agy_command = "agy"
 mode = "codex_prompt"
 grant_ttl_minutes = 240
 
+[controller]
+light_models = [] # 例如 ["gpt-5.6-luna"]
+suggested_controller = "Codex Sol High"
+
 [limits]
 max_dispatches_per_grant = 5
 max_concurrency = 1

@@ -52,3 +52,16 @@ function Get-HarnessPathPython {
     }
     return $command.Source
 }
+
+function Get-HarnessSkillFiles {
+    param([string]$SourceRoot)
+
+    foreach ($required in @('SKILL.md', 'references/dispatch.md')) {
+        if (-not [IO.File]::Exists((Join-Path $SourceRoot $required))) {
+            throw "技能來源缺少檔案：$required"
+        }
+    }
+    Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force -File | ForEach-Object {
+        $_.FullName.Substring($SourceRoot.Length + 1)
+    }
+}

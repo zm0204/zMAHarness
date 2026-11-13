@@ -58,5 +58,7 @@
 !/.agents/skills/
 !/.agents/skills/harness/
 !/.agents/skills/harness/SKILL.md
+!/.agents/skills/harness/references/
+!/.agents/skills/harness/references/dispatch.md
 !/mah/window_approval.py
 !/tests/v2/test_window_approval.py
