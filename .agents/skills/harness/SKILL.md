@@ -14,7 +14,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | T2 | 變更觸及 `t2_risky_paths` 且差異行數達 `t2_risky_diff_lines` |
 | T3 | 預計讀取達 `t3_read_files` 或 `t3_read_kb`，預期產出很小 |
 | T4 | 既有 Codex 額度快照達 `t4_codex_used_percent`，且有低成本驗收方法。缺快照時不用 T4 |
-| T5 | 使用者主動要求協作或呼叫 `$harness` |
+| T5 | 使用者主動要求協作，或呼叫 `$harness`（Codex）/`/harness`（Claude Code） |
 
 ## 對話內提議
 
@@ -52,7 +52,7 @@ Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範
 3. `繼續協作（改用備選：<本次備選模型 · effort>）`
 
 **T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
-點選或手打回覆。初始的 T5 請求或 `$harness` 呼叫只觸發提議。即使初始請求已指定模型與
+點選或手打回覆。初始的 T5 請求或 `$harness`／`/harness` 呼叫只觸發提議。即使初始請求已指定模型與
 檔案，也不得在顯示卡片的同一輪執行 `card create`、`grant approve` 或 `dispatch`。
 只有收到該卡片的回覆後，才能在下一輪依該回覆進行授權與派工。原生互動工具不可用時，
 回報限制並由主控 Agent 本地繼續原任務。Card ID、雜湊、Grant、工作目錄及證據檔留在背景。
@@ -85,16 +85,19 @@ Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範
 `Codex Sol High`。只有從執行環境確認自己的模型 ID 且與 `light_models` 其中一項完全相符，
 才算輕量主控。無法確認 ID 時一律視為非輕量。禁止模型自行評估能力。
 
-輕量主控沿用同一頁卡片、五項資訊、手打覆寫和強制暫停規則。卡片列出計畫 Review 的
-模型與實際範圍，三個選項改為：
+輕量主控沿用同一頁卡片、五項資訊、手打覆寫和強制暫停規則。卡片列出選項 3 的模型、
+任務類型與實際範圍，三個選項改為：
 
 1. `不同意（目前主控自己繼續）`
 2. `切換主控（建議：<suggested_controller>；請你在介面切換後回覆）`
-3. `繼續協作：用 <依推薦表選出的強模型 · effort> Review 目前計畫`
+3. 依情境填入推薦表中的強模型與 effort。
+   - 仍在規劃、尚未開始實作，且本次要審查的是實作計畫時，使用 `繼續協作：用 <強模型 · effort> Review 目前計畫`。
+     使用既有 `review` 模板，把實作計畫寫進 `task.md`。Context-Bundle 將計畫放入任務指示，
+     隨 `bundle create` 封裝。相關原始檔沿用核准的 Context-Bundle／Worktree 規則。
+   - 其他情況沿用原觸發對應的任務類型與範圍，只更換模型與 effort。例如 T1 卡關時使用
+     `繼續協作：用 <強模型 · effort> 做 Second Opinion`。T5 指定 Research 或 Review 時沿用指定任務。
 
 選項 1 立即繼續原任務，同一任務不再追問。選項 2 由使用者在介面切換後回覆，再繼續原任務。
-選項 3 使用既有 `review` 模板。把主控的實作計畫寫進 `task.md`，Context-Bundle 模式將計畫放入
-任務指示並隨 `bundle create` 封裝。相關原始檔沿用核准的 Context-Bundle／Worktree 規則。
 
 `--via codex_prompt` 代表「主控對話內核准」，適用任何主控。
 收到使用者同意協作的回覆後，才讀取 [references/dispatch.md](references/dispatch.md) 並照著執行。
