@@ -11,6 +11,7 @@ import re
 from stat import S_ISDIR
 from uuid import uuid4
 
+from .adapters.registry import policy_for
 from .db import connect, initialize, transaction
 
 BRAND_NAME = "zMAHarness"
@@ -109,14 +110,16 @@ def require_bound_workspace(value, scope):
 
 def require_dispatch_scope(db, grant, adapter, *, workspace_path, task_sha256, timeout_seconds):
     via, evidence = grant["approved_via"], grant["approval_evidence"]
+    policy = policy_for(adapter)
     if via == "codex_prompt":
         if evidence != DESKTOP_APPROVAL_EVIDENCE or grant["max_dispatches"] != 1:
             raise LedgerError(10, "Invalid Desktop approval source or dispatch limit")
-    elif adapter == "agy-print" and (via != "manual_cli" or evidence not in (None, "interactive_terminal_confirmation")):
-        raise LedgerError(10, "Unsupported agy-print approval source; local window interaction is synthetic-only")
+    elif policy.attended_approval_only and (
+            via != "manual_cli" or evidence not in (None, "interactive_terminal_confirmation")):
+        raise LedgerError(10, f"Unsupported {adapter} approval source; local window interaction is synthetic-only")
     saved = grant["dispatch_scope_json"]
     if saved is None:
-        if adapter == "agy-print" or via == "codex_prompt":
+        if policy.requires_dispatch_scope or via == "codex_prompt":
             raise LedgerError(10, "This grant lacks dispatch scope; create and approve a new card")
         return None
     card = db.execute("SELECT status, content_json, content_sha256 FROM cards WHERE card_id = ?",
@@ -198,7 +201,7 @@ class GrantLedger:
             raise LedgerError(16, "Card exceeds the dispatch or duration hard limit")
         repo = path_identity(repo_root)
         scope = {}
-        if any(target["adapter"] == "agy-print" for target in allowed_targets) or any(
+        if any(policy_for(target["adapter"]).requires_dispatch_scope for target in allowed_targets) or any(
             value is not None for value in (timeout_seconds, workspace_path, task_sha256)
         ):
             if (type(timeout_seconds) is not int
@@ -258,13 +261,14 @@ class GrantLedger:
         if BOUND_SCOPE_FIELDS <= content.keys():
             require_bound_workspace(content["workspace_path"], content)
         elif BOUND_SCOPE_FIELDS & content.keys() or any(
-            target["adapter"] == "agy-print" for target in content["allowed_targets"]
+            policy_for(target["adapter"]).requires_dispatch_scope for target in content["allowed_targets"]
         ):
             raise LedgerError(10, "Card lacks a complete dispatch scope; create a new card")
         if via == "codex_prompt" and (content["max_dispatches"] != 1 or not BOUND_SCOPE_FIELDS <= content.keys()):
             raise LedgerError(10, "Desktop approval requires a fully scoped single-dispatch card")
         if window and (content["max_dispatches"] != 1 or not BOUND_SCOPE_FIELDS <= content.keys()
-                       or any(target["adapter"] != "fake" for target in content["allowed_targets"])):
+                       or any(not policy_for(target["adapter"]).window_approval
+                              for target in content["allowed_targets"])):
             raise LedgerError(10, "核准視窗僅接受已綁定範圍的單次 Fake Adapter 卡片")
         return card
 
@@ -432,7 +436,7 @@ class GrantLedger:
         expected = run["state"]
         replaying_output = (
             expected == "FAILED" and state == "COLLECTING" and reason == "agy_output_recollected"
-            and run["adapter"] == "agy-print" and run["state_reason"] == AGY_OUTPUT_CONFLICT
+            and policy_for(run["adapter"]).replays_structured_output and run["state_reason"] == AGY_OUTPUT_CONFLICT
             and run["acceptance_status"] == "PENDING" and run["result_sha256"] is None
             and run["exit_code"] == 0 and run["dispatch_consumed"] == 1
             and valid_id(SHA256, result_sha256)
@@ -443,11 +447,11 @@ class GrantLedger:
         if state == "FAILED_PRE_SUBMIT" and reason not in PRE_SUBMIT_REASONS:
             raise LedgerError(20, "Known pre-submit evidence is required for a refund")
         if state == "FAILED_PRE_SUBMIT" and reason == "process_not_started" and (
-            run["adapter"] != "agy-print" or not (evidence or {}).get("agy_capture_sha256")
+            not policy_for(run["adapter"]).refunds_unstarted_process or not (evidence or {}).get("agy_capture_sha256")
         ):
             raise LedgerError(20, "Local process failure requires a bound agy capture")
         if (state == "CANCELLED" and expected == "LAUNCHING"
-                and (run["adapter"] != "gui-terra" or reason != "gui_not_submitted")):
+                and (not policy_for(run["adapter"]).gui_submission or reason != "gui_not_submitted")):
             raise LedgerError(20, "A GUI launch needs explicit not-submitted evidence")
         refund = state in REFUND_STATES
         if refund and not run["dispatch_consumed"]:

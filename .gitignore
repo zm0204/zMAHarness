@@ -52,6 +52,10 @@
 !/templates/delegate-implement/result.schema.json
 !/mah/adapters/
 !/mah/adapters/agy_print.py
+!/mah/adapters/base.py
+!/mah/adapters/registry.py
+!/tests/v2/test_adapter_registry.py
+!/docs/ADAPTERS.md
 !/tests/v2/test_agy_print.py
 !/tests/v2/fixtures/
 !/tests/v2/fixtures/agy-1.5.5-phase0b2-redacted.json

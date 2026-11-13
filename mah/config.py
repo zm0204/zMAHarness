@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 import tomllib
 
+from .adapters.registry import configurable_names
 from .ledger import BRAND_NAME, EFFORT_LEVELS, Limits
 
-ADAPTERS = {"codex-exec", "gui-terra", "agy-print"}
 DEFAULTS = {
     "paths": {"state_dir": "state", "worktree_root": "worktrees", "gui_workspace_root": "gui"},
     "adapters": {"enabled": ["codex-exec", "gui-terra", "agy-print"], "codex_command": "codex", "agy_command": "agy"},
@@ -121,11 +121,12 @@ def load_config(path=None):
     limits = values["limits"]
     if limits["max_effort"] not in EFFORT_LEVELS:
         raise ConfigError("limits.max_effort 無效")
+    adapters = set(configurable_names())
     enabled = values["adapters"]["enabled"]
-    if any(adapter not in ADAPTERS for adapter in enabled) or len(set(enabled)) != len(enabled):
+    if any(adapter not in adapters for adapter in enabled) or len(set(enabled)) != len(enabled):
         raise ConfigError("adapters.enabled 有未知或重複的 Adapter")
     for template, defaults in values["defaults"].items():
-        if defaults["adapter"] not in ADAPTERS or defaults["effort"] not in EFFORT_LEVELS:
+        if defaults["adapter"] not in adapters or defaults["effort"] not in EFFORT_LEVELS:
             raise ConfigError(f"defaults.{template} 的 Adapter 或思考程度無效")
         if (defaults["adapter"] != DEFAULTS["defaults"][template]["adapter"]
                 and "model" not in supplied.get("defaults", {}).get(template, {})):

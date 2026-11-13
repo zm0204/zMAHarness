@@ -9,7 +9,7 @@ import sqlite3
 import sys
 from uuid import uuid4
 
-from .adapters.agy_print import AgyPrintAdapter
+from .adapters.registry import create_adapter, dispatchable_names, has_factory, policy_for
 from .config import _local_path, load_config
 from .context_bundle import bundle_manifest, check_bundle, prepare_bundle, prepare_worktree
 from .ledger import (BRAND_NAME, DISPATCH_SCOPE_FIELDS, READ_ONLY_TEMPLATES, SHA256, SUGGESTION_CARD_TITLE,
@@ -61,7 +61,7 @@ def parser():
     dispatch.add_argument("--grant", required=True)
     dispatch.add_argument("--run-id")
     dispatch.add_argument("--template", choices=sorted(TEMPLATES), required=True)
-    dispatch.add_argument("--adapter", choices=("agy-print",), required=True)
+    dispatch.add_argument("--adapter", choices=dispatchable_names(), required=True)
     dispatch.add_argument("--model", required=True)
     dispatch.add_argument("--effort", required=True)
     dispatch.add_argument("--task-file", required=True, type=Path)
@@ -182,10 +182,10 @@ def approve(ledger, args):
     output(grant_view(ledger.get_grant(grant_id)))
 
 
-def dispatch_agy(manager, config, args):
+def dispatch_run(manager, config, args):
     adapters = config.values["adapters"]
     if args.adapter not in adapters["enabled"]:
-        raise LedgerError(14, "agy-print 尚未在本機設定啟用")
+        raise LedgerError(14, f"{args.adapter} 尚未在本機設定啟用")
     grant = manager.ledger.get_grant(args.grant)
     if grant is None:
         raise LedgerError(10, "找不到有效 Grant")
@@ -195,10 +195,7 @@ def dispatch_agy(manager, config, args):
             timeout = json.loads(grant["dispatch_scope_json"])["timeout_seconds"]
         except (KeyError, TypeError, ValueError) as exc:
             raise LedgerError(10, "Grant 缺少有效的核准逾時") from exc
-    command = adapters["agy_command"]
-    # A single executable path relative to the local TOML, or a command on PATH.
-    if Path(command).is_absolute() or "/" in command or chr(92) in command:
-        command = str((config.path.parent / Path(command)).resolve())
+    adapter = create_adapter(args.adapter, manager, config)
     requirements = None
     if args.requirements_file is not None:
         requirements = json.loads(args.requirements_file.read_text(encoding="utf-8-sig"),
@@ -207,9 +204,9 @@ def dispatch_agy(manager, config, args):
     # Historical smoke commands still require a bundle; ordinary bundles need no switch.
     if args.bundle_smoke and bundle_manifest(task) is None:
         raise LedgerError(17, "--bundle-smoke 需要 Context-Bundle")
-    adapter = AgyPrintAdapter(manager, command=command, max_task_bytes=config.values["limits"]["max_task_bytes"])
+    run_id = args.run_id or f"{policy_for(args.adapter).run_id_prefix}-{uuid4().hex}"
     return manager.dispatch(
-        adapter, grant_id=args.grant, run_id=args.run_id or f"agy-{uuid4().hex}", repo_root=grant["repo_root"],
+        adapter, grant_id=args.grant, run_id=run_id, repo_root=grant["repo_root"],
         template=args.template, model=args.model, effort=args.effort, task=task,
         workspace=args.workspace, worktree_root=config.values["paths"]["worktree_root"],
         timeout_s=timeout, requirements=requirements,
@@ -298,15 +295,15 @@ def main(argv=None):
         manager = RunManager(ledger, max_summary_chars=config.values["limits"]["max_result_summary_chars"])
         manager.scan()
         if args.group == "dispatch":
-            run = dispatch_agy(manager, config, args)
+            run = dispatch_run(manager, config, args)
             output(run)
             return run_exit_code(run)
         if args.group == "status":
             output(manager.status(args.run_id))
         elif args.group == "resolve":
             run = ledger.get_run(args.run_id)
-            if run is not None and run["adapter"] == "agy-print":
-                AgyPrintAdapter(manager).collect_saved(args.run_id)
+            if run is not None and has_factory(run["adapter"]):
+                create_adapter(run["adapter"], manager, config).collect_saved(args.run_id)
             output(manager.resolve(args.run_id, action=args.resolution))
         elif args.group in ("accept", "reject-result"):
             output(manager.record_acceptance(
@@ -321,8 +318,9 @@ def main(argv=None):
                 collected = Verifier(manager, allowed_command_prefixes=prefixes).verify(args.run_id, evidence=evidence)
             else:
                 run = ledger.get_run(args.run_id)
-                if run is not None and run["adapter"] == "agy-print":
-                    collected = AgyPrintAdapter(manager).collect_saved(args.run_id, replay_output=args.replay_output)
+                if run is not None and has_factory(run["adapter"]):
+                    collected = create_adapter(run["adapter"], manager, config).collect_saved(
+                        args.run_id, replay_output=args.replay_output)
                 elif args.replay_output:
                     raise LedgerError(20, "Output replay requires an existing agy-print run")
                 else:

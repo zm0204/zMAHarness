@@ -6,6 +6,7 @@ import json
 from os import getpid
 from subprocess import TimeoutExpired
 
+from .adapters.registry import policy_for
 from .atomic_io import atomic_write
 from .context_bundle import bundle_manifest
 from .db import connect, transaction
@@ -115,7 +116,8 @@ class RunManager:
                 raise LedgerError(20, "Result artifacts already exist; do not launch")
             grant = db.execute("SELECT * FROM grants WHERE grant_id = ?", (run["grant_id"],)).fetchone()
             scope = None
-            if invocation is not None or run["adapter"] == "agy-print" or (grant and grant["dispatch_scope_json"]):
+            if (invocation is not None or policy_for(run["adapter"]).requires_dispatch_scope
+                    or (grant and grant["dispatch_scope_json"])):
                 if not grant or grant["status"] != "ACTIVE" or grant["expires_at"] <= timestamp(self.ledger.clock()):
                     raise LedgerError(12, "Grant is no longer active at launch")
                 if invocation is None:
@@ -195,7 +197,7 @@ class RunManager:
         with transaction(self.database) as db:
             run = self._run(db, run_id)
             if gui_not_submitted:
-                if run["state"] != "LAUNCHING" or run["adapter"] != "gui-terra":
+                if run["state"] != "LAUNCHING" or not policy_for(run["adapter"]).gui_submission:
                     raise LedgerError(20, "A GUI launch and explicit not-submitted evidence are required")
                 self._change(db, run, "CANCELLED", reason="gui_not_submitted")
             elif run["state"] in ("RESERVED", "PREPARED"):
@@ -366,7 +368,7 @@ class RunManager:
         """Collect locally; adapter-backed runs use the template Verifier for success."""
         with transaction(self.database) as db:
             run = self._run(db, run_id)
-            if verified_sha256 is not None and run["adapter"] in ("fake", "agy-print"):
+            if verified_sha256 is not None and policy_for(run["adapter"]).template_verified:
                 raise LedgerError(30, "Template verification is required")
             return self._collect(db, run, verified_sha256=verified_sha256,
                                  required_action_denied=required_action_denied)
@@ -419,7 +421,8 @@ class RunManager:
             completion, _, data = self._completion(run)
             if run["state"] != "SUCCEEDED" or completion != "verified":
                 raise LedgerError(30, "Acceptance requires a verified successful result")
-            if total is not None and run["adapter"] in ("fake", "agy-print") and run["template"] in ("review", "second-opinion"):
+            if (total is not None and policy_for(run["adapter"]).template_verified
+                    and run["template"] in ("review", "second-opinion")):
                 key = "findings" if run["template"] == "review" else "hypotheses"
                 if total != len(json.loads(data)["template_payload"][key]):
                     raise LedgerError(2, "Adoption total does not match the verified result")

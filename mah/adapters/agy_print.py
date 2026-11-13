@@ -354,6 +354,14 @@ class AgyPrintAdapter:
         self.command = command
         self.max_task_bytes = max_task_bytes
 
+    @classmethod
+    def from_config(cls, manager, config):
+        command = config.values["adapters"]["agy_command"]
+        # A single executable path relative to the local TOML, or a command on PATH.
+        if Path(command).is_absolute() or "/" in command or chr(92) in command:
+            command = str((config.path.parent / Path(command)).resolve())
+        return cls(manager, command=command, max_task_bytes=config.values["limits"]["max_task_bytes"])
+
     def _executable(self):
         command = which(str(self.command)) if self.command else None
         if command is None and self.command == "agy" and os.name == "nt":
