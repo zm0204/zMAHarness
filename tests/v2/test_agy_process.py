@@ -4,6 +4,7 @@ from hashlib import sha256
 from io import StringIO
 import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 import subprocess
@@ -934,7 +935,10 @@ class AgyProcessTests(unittest.TestCase):
 
     def test_cli_uses_toml_executable_and_dispatches_through_manager(self):
         settings = self.state / "fixture.toml"
-        relative_exe = os.path.relpath(sys.executable, self.state).replace(chr(92), "/")
+        # Keep the configured stand-in on the fixture drive. The Popen substitute runs the real interpreter.
+        executable = self.state / Path(sys.executable).name
+        shutil.copy2(sys.executable, executable)
+        relative_exe = "./" + executable.name
         settings.write_text(
             '[paths]\nstate_dir = "."\nworktree_root = "../trees"\n'
             '[adapters]\nenabled = ["agy-print"]\nagy_command = ' + json.dumps(relative_exe) + '\n',
@@ -957,6 +961,6 @@ class AgyProcessTests(unittest.TestCase):
             self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 0)
             task.write_bytes(self.task_bytes())
             self.assertEqual(cli.main(args), 30)
-        self.assertEqual(Path(self.started[0][0]), Path(sys.executable).resolve())
+        self.assertEqual(Path(self.started[0][0]), executable.resolve())
         self.assertEqual(self.started[0][self.started[0].index("--print-timeout") + 1], "5s")
         self.assertEqual(json.loads(stdout.getvalue())["state"], "COLLECTING")
