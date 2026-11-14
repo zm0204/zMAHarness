@@ -10,7 +10,8 @@ from .ledger import BRAND_NAME, EFFORT_LEVELS, Limits
 
 DEFAULTS = {
     "paths": {"state_dir": "state", "worktree_root": "worktrees", "gui_workspace_root": "gui"},
-    "adapters": {"enabled": ["codex-exec", "gui-terra", "agy-print"], "codex_command": "codex", "agy_command": "agy"},
+    "adapters": {"enabled": ["codex-exec", "gui-terra", "agy-print", "claude-print"], "codex_command": "codex",
+                 "agy_command": "agy", "claude_command": "claude"},
     "approval": {"mode": "codex_prompt", "grant_ttl_minutes": 240},
     "controller": {"light_models": [], "suggested_controller": "Codex Sol High"},
     "limits": {"max_dispatches_per_grant": 5, "max_concurrency": 1, "max_effort": "high",

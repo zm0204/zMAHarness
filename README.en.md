@@ -11,6 +11,7 @@ zMAHarness follows a **Single-Agent First** workflow. The controller agent (Code
 - **Operating system**　Windows 11.
 - **Controller**　Either [Codex Desktop](https://openai.com/codex/) or [Claude Code](https://code.claude.com/docs/).
 - **Worker**　Install the Antigravity CLI (`agy`) from the [official Google documentation](https://antigravity.google/docs/install?tab=cli) and sign in with a personal Google AI Pro subscription.
+- **Claude Worker (optional)**　Install the Claude Code CLI with `npm install -g @anthropic-ai/claude-code`, then sign in with your Claude account by running `claude auth login` (or run `claude` and follow the prompts). The Worker uses your Claude subscription and shares the same Pro usage limit as your everyday use of Claude. Do not set `ANTHROPIC_API_KEY`; otherwise the CLI switches to API billing. zMAHarness removes every `ANTHROPIC_` variable when it starts the Worker, but running `claude` yourself in a terminal is still affected. zMAHarness only launches the native `claude.exe` inside the package, never through npm's `claude.cmd` shim.
 - **Local tools**　Git, PowerShell 5.1 or 7, Python 3.11 or later. Add the `python.exe` you intend to use to PATH, and enable the Python user site-packages directory.
 
 In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13`, or install from python.org and select **Add python.exe to PATH**. If `python.exe` points into `Microsoft\WindowsApps` and cannot run, it is a Microsoft Store placeholder, not a working Python installation. Disable the `python.exe` and `python3.exe` aliases under Settings → Apps → Advanced app settings → App execution aliases, then reopen the terminal before installing.
@@ -21,6 +22,7 @@ In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13
 | --- | --- |
 | Gemini | **Real dispatch**: T5 triggered a cross-project Second Opinion on BatchTable, requesting `gemini-3.8-flash-high · high` via `agy-print` in Context-Bundle mode. The controller adopted the suggestions after independent checking, and the ledger recorded `SUCCEEDED`/`ACCEPTED`. **Offline tests**: re-collection and the Verifier are validated against a de-identified real receipt from a Flash Low Review. Real end-to-end flows for other models and effort levels, the Research template, and Disposable Worktree have not been accepted yet. |
 | Claude | Sonnet and Opus are listed as candidate models for `agy-print`. Real worker dispatch has not been accepted yet. |
+| Claude (`claude-print`) | Offline tests pass; real dispatch has not been accepted yet. |
 | Codex | JSONL, Thread ID, and UTF-8 of the nested CLI have been verified. Tool operations in that run were refused by policy, and the formal `codex-exec` Adapter has not been integrated or accepted yet. |
 | Terra GUI | V1 file handoff was once tested in an isolated environment. Formal V2 GUI dispatch has not been accepted yet. |
 
@@ -48,6 +50,8 @@ Setup reuses V1's `.local/settings.json` and working directory, and creates the 
 - `%USERPROFILE%\.claude\skills\zmaharness\`
 
 Re-running keeps the existing TOML and V1 local settings, and updates the engine registration and both Skill copies. Installation needs only standard user privileges, and the Python side uses only the standard library. Doctor can check offline the CLI import, hints of an `agy.exe` installation, the local TOML, and the consistency of both Skill copies. Actual sign-in, model availability, and Skill loading in the controller UI must be confirmed when you use it.
+
+An existing local TOML keeps its `adapters.enabled` list and never gains new Workers automatically. To use the Claude Worker, add `"claude-print"` to `adapters.enabled` yourself; Doctor shows the line to use when it finds the claude executable but the Worker is not enabled.
 
 The Skill was previously named `harness`. When setup is re-run, an old `harness` directory in either location above is removed automatically if it is confirmed to be an old install of this project. A Skill with the same name that does not belong to this project is always kept, and only a warning is printed.
 
@@ -100,9 +104,8 @@ suggested_controller = "Codex Sol High"
 
 The following items are **planned and not yet implemented**.
 
-2) Adapter interface refactoring.
-3) `codex-exec` (GPT) and `claude-print` (Claude CLI) workers.
-4) OpenAI-compatible API worker (DeepSeek, and local models such as Ollama). Supports Context-Bundle only, and requires users to provide their own API key.
+1) `codex-exec` (GPT) worker.
+2) OpenAI-compatible API worker (DeepSeek, and local models such as Ollama). Supports Context-Bundle only, and requires users to provide their own API key.
 
 ## Offline verification
 

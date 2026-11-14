@@ -5,7 +5,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 
-from .adapters.registry import capture_check
+from .adapters.registry import capture_check, capture_reason
 from .atomic_io import atomic_write
 from .context_bundle import bundle_manifest
 from .db import transaction
@@ -276,7 +276,7 @@ class Verifier:
             check = capture_check(summary["adapter"])
             if check is not None and completion == "verified":
                 if not check(directory, summary, digest):
-                    summary["verification"] = {"decision": "pending", "reason": "agy_capture_integrity"}
+                    summary["verification"] = {"decision": "pending", "reason": capture_reason(summary["adapter"])}
                     return summary
             requirements = self._read_requirements(directory, run) if task_verified else None
             tool_reason, tools = self._tool_evidence(

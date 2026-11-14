@@ -356,7 +356,7 @@ class CliTests(unittest.TestCase):
         missing_config = self.root / "missing.toml"
         with patch("mah.config.default_config_path", return_value=missing_config):
             values = load_config().values
-        self.assertEqual(values["adapters"]["enabled"], ["codex-exec", "gui-terra", "agy-print"])
+        self.assertEqual(values["adapters"]["enabled"], ["codex-exec", "gui-terra", "agy-print", "claude-print"])
         self.assertEqual(values["approval"]["mode"], "codex_prompt")
         for template in ("review", "second_opinion", "research"):
             self.assertEqual(values["defaults"][template],

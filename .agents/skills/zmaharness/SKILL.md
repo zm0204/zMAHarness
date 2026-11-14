@@ -23,6 +23,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 `python -B -m mah preflight --repo <目標專案根目錄> --adapter <Adapter>`
 
 - 輸出 JSON 的 `ok` 為 `false`（結束碼 30）時不出卡。用一句話告訴使用者原因（取自 `reasons`），然後由主控 Agent 自己繼續原任務。
+- `--adapter` 依下方「Adapter 路由」決定。Claude 模型先檢查 `claude-print`，不 ok 時改檢查 `agy-print`；兩個都不 ok 就不出卡。
 - `--repo` 使用主控目前工作資料夾所屬的 Git 專案。要審查的檔案不在目前的工作資料夾內時，不出卡，請使用者在該專案開啟主控。
 - 雲端硬碟、網頁等不在本機 Git 專案裡的資料，不在協作範圍內，不出卡。
 - `needs_unsandboxed_dispatch` 會影響卡片的【授權限制】，規則見下方「對話內提議」。
@@ -67,7 +68,11 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | --- | --- |
 | T3 大量資料整理／研究，或小型常規檢查 | `gemini-3.8-flash-low · low`。需要整合較多線索時用 `gemini-3.8-flash-medium · medium`。 |
 | T2 核心邏輯／跨模組高風險 Review | `gemini-4-argon-medium · medium`。跨模組交互複雜時用 `gemini-4-argon-high · high`。 |
-| T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `claude-sonnet-5-5-high · high`、`claude-opus-5-5-high · high` 或 `gemini-4-argon-high · high`，依所需視角與深度選擇。 |
+| T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `sonnet · high`、`opus · high` 或 `gemini-4-argon-high · high`，依所需視角與深度選擇。 |
+
+**Adapter 路由。** Gemini 系列用 `agy-print`。Claude 系列優先用 `claude-print`，模型寫 Claude 的名稱（`sonnet`、`opus`）加上 effort。
+`claude-print` 的出卡前檢查不 ok 時，Claude 模型改用 `agy-print` 的 `claude-sonnet-5-5-<effort>`、`claude-opus-5-5-<effort>` ID；
+兩個都不 ok 就不出卡。卡片的【建議模型】只顯示模型與 effort，不顯示 Adapter 名稱。
 
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
 這類任務的選項 2 建議 `gemini-4-argon-high · high`，選項 3 沿用備選規則。使用者手打指定時不受此限。
@@ -107,6 +112,11 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 | Gemini 4 Argon | `gemini-4-argon-low` | `gemini-4-argon-medium` | `gemini-4-argon-high` |
 | Claude Sonnet 5.5 | `claude-sonnet-5-5-low` | `claude-sonnet-5-5-medium` | `claude-sonnet-5-5-high` |
 | Claude Opus 5.5 | `claude-opus-5-5-low` | `claude-opus-5-5-medium` | `claude-opus-5-5-high` |
+| Claude Sonnet（`claude-print`） | `sonnet` + `--effort low` | `sonnet` + `--effort medium` | `sonnet` + `--effort high` |
+| Claude Opus（`claude-print`） | `opus` + `--effort low` | `opus` + `--effort medium` | `opus` + `--effort high` |
+
+上表前四列是 `agy-print` 的模型 ID；後兩列是 `claude-print` 的寫法，模型用名稱、effort 另用 `--effort` 指定。
+只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
 
 只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
 只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，

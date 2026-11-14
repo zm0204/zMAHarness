@@ -7,10 +7,12 @@ worktree_root = "worktrees"
 gui_workspace_root = "gui"
 
 [adapters]
-enabled = ["codex-exec", "gui-terra", "agy-print"]
+enabled = ["codex-exec", "gui-terra", "agy-print", "claude-print"]
 codex_command = "codex"
 # 可使用官方執行檔的完整路徑，或相對於本 TOML 的路徑。
 agy_command = "agy"
+# claude-print 只啟動原生 claude.exe；npm 安裝的 claude.cmd 會自動對應到套件內的 bin/claude.exe。
+claude_command = "claude"
 
 [approval]
 mode = "codex_prompt"

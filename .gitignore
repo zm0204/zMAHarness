@@ -55,6 +55,12 @@
 !/mah/adapters/agy_print.py
 !/mah/adapters/base.py
 !/mah/adapters/registry.py
+!/mah/adapters/cli_worker.py
+!/mah/adapters/claude_print.py
+!/tests/v2/test_cli_worker.py
+!/tests/v2/test_claude_print.py
+!/tests/v2/fixtures/claude-2.1.325-bundle-smoke-redacted.json
+!/docs/v2/CLAUDE_SMOKE_TEST.md
 !/mah/preflight.py
 !/tests/v2/test_preflight.py
 !/tests/v2/test_adapter_registry.py

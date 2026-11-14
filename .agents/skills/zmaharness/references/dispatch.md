@@ -23,6 +23,10 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 
 兩段 PowerShell 腳本都會寫入 zMAHarness 帳本並啟動 Worker，必須在沙盒外執行。依主控平台的機制請求核准：
 Codex 請求沙盒外或提權執行；Claude Code 使用一般的權限確認。被拒絕時回報原因，由主控 Agent 自己繼續原任務。
+使用 `claude-print` 時，Card 的 `allowed_targets` 與 `dispatch` 都用 `--adapter claude-print`，模型寫 `sonnet` 或 `opus`，
+effort 用 `--effort`。它只支援 Review、Second Opinion 與 Research，不支援 delegate-implement。
+`dispatch` 回報 `SUBMISSION_UNKNOWN` 且原因是 `process_not_started` 時，代表 Worker 沒有啟動，不會產生任何費用；
+可以直接執行 `python -B -m mah resolve <run_id> --mark-failed` 收尾，再請使用者決定要不要重新提議。
 `dispatch` 回傳 `14` 且訊息說明派工必須在沙盒外執行時，這次沒有建立 Run，也沒有消耗 Grant。
 依主控平台的機制請求沙盒外執行後重試一次；被拒絕就回報原因，由主控 Agent 自己繼續原任務。不得自動重試第二次。
 

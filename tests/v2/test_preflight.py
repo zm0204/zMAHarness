@@ -227,6 +227,14 @@ class GitClassificationTests(unittest.TestCase):
         self.assertEqual([name for name, reason in reasons.items() if reason == NOT_A_GIT_REPOSITORY], ["not_repository"])
         self.assertEqual([name for name, reason in reasons.items() if "請安裝 Git" in reason], ["not_installed"])
 
+    def test_git_runs_with_english_messages_in_every_locale(self):
+        with patch.dict(os.environ, {"LC_ALL": "zh_TW.UTF-8", "LANGUAGE": "zh_TW"}), \
+                patch("mah.preflight.subprocess.run", return_value=self.completed(0, stdout="C:/x\n")) as run:
+            git_toplevel(Path("target"))
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual((environment["LC_ALL"], environment["LANGUAGE"]), ("C", "C"))
+        self.assertEqual(environment["PATH"], os.environ["PATH"])
+
     def test_a_working_git_returns_the_root(self):
         self.assertEqual(self.classify(self.completed(0, stdout="C:/work/project\n")), ("C:/work/project", None))
 

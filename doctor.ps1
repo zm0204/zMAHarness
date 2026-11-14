@@ -258,6 +258,24 @@ try {
 }
 catch { Report-Check '失敗' 'agy 執行檔' $_.Exception.Message }
 
+# claude 原生執行檔的解析只在 Python（mah preflight）；沒有可用的 Python 時略過。
+if ($python -and -not $pathsFailed) {
+    try {
+        $claudeQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.preflight import preflight; r = preflight(sys.argv[1], ''claude-print''); print(json.dumps({''found'': r[''adapter_executable_found''], ''enabled'': r[''adapter_enabled'']}))'
+        $claudeRaw = & (Get-HarnessPathPython) -I -B -c $claudeQuery $PSScriptRoot
+        if ($LASTEXITCODE -ne 0) { throw '無法檢查 claude-print。' }
+        $claude = ($claudeRaw -join "`n") | ConvertFrom-Json
+        if (-not $claude.found) {
+            Report-Check '需人工驗證' 'claude-print' '未找到 claude 原生執行檔（.exe）。使用 Claude Worker 前請安裝 Claude Code CLI，或在本機 TOML 把 claude_command 設成 claude.exe 的絕對路徑。'
+        }
+        elseif (-not $claude.enabled) {
+            Report-Check '需人工驗證' 'claude-print' '已找到 claude 原生執行檔，但 claude-print 不在 adapters.enabled。要使用 Claude Worker，請在本機 TOML 改成 enabled = ["codex-exec", "gui-terra", "agy-print", "claude-print"]。'
+        }
+        else { Report-Check '通過' 'claude-print' '已啟用，並找到 claude 原生執行檔。' }
+    }
+    catch { Report-Check '需人工驗證' 'claude-print' $_.Exception.Message }
+}
+
 $skillSource = Join-Path $PSScriptRoot '.agents/skills/zmaharness'
 $skillTargets = [ordered]@{
     'Codex 使用者技能' = '.agents/skills/zmaharness'

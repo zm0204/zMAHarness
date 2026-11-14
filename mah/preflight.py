@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 from tempfile import mkstemp
 
-from .adapters.registry import executable_lookup
+from .adapters.registry import executable_lookup, executable_missing_reason
 from .config import HOME_VARIABLE, ConfigError, adapter_enabled, default_config_path, load_config, \
     sandbox_redirect_detected
 from .ledger import LedgerError
@@ -31,8 +31,11 @@ def git_toplevel(path):
     the original error, so a sandbox denial is never mistaken for "not a repository".
     """
     try:
+        # English messages in every locale, so "not a git repository" can be matched reliably.
+        environment = os.environ | {"LC_ALL": "C", "LANGUAGE": "C"}
         result = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], stdin=subprocess.DEVNULL,
-                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                                env=environment)
     except FileNotFoundError:
         return None, GIT_NOT_INSTALLED
     except PermissionError as exc:
@@ -78,7 +81,7 @@ def preflight(repo, adapter, config_path=None):
     lookup = executable_lookup(adapter)
     executable_found = None if lookup is None or config is None else lookup(config) is not None
     if executable_found is False:
-        reasons.append(f"找不到 {adapter} 的 Worker 執行檔，請安裝或檢查本機設定。")
+        reasons.append(executable_missing_reason(adapter) or f"找不到 {adapter} 的 Worker 執行檔，請安裝或檢查本機設定。")
 
     redirected = sandbox_redirect_detected()
     return {
