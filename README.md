@@ -55,6 +55,8 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 
 安裝後，用選定的主控開啟要工作的 Git 專案。Codex Desktop 用 `$zmaharness` 呼叫，Claude Code 用 `/zmaharness`。也可以直接交辦開發工作，符合協作條件時，主控會在對話中顯示 **【zMAHarness 協作建議】**，列出觸發原因、建議模型、任務與範圍、授權限制及協作理由。卡片和回覆使用你提問的語言，品牌、模型 ID 與指令名保留原文。
 
+出卡前，主控會先執行唯讀的 `mah preflight`，確認目標是本機 Git 專案、本機設定存在、Worker 已啟用且找得到執行檔。檢查不通過時不出卡，主控會說明原因並自己繼續原任務。若訊息是「不是 Git 專案」或「無法檢查 Git 專案」，也可能是因為目標不在主控目前的工作資料夾內，或被沙盒限制存取；請在該專案開啟主控後再試。
+
 - **不同意**　主控立即自行繼續原任務，同一問題不會反覆詢問。
 - **繼續協作**　可選擇建議模型、備選模型，或手打調整模型、思考程度及縮小檔案範圍。主控依你的選擇準備資料與單次 Grant，派工後獨立驗收並決定是否採納。
 
@@ -82,7 +84,7 @@ Codex 在 Windows 的 workspace-write 沙盒會把 `%LOCALAPPDATA%` 重新導向
 
 沙盒只允許寫入工作資料夾，因此派工必須在沙盒外執行。出卡前的 `mah preflight` 偵測到沙盒時，卡片的授權限制會註明「派工時需核准一次沙盒外執行」，派工時 Codex 會請你核准一次。若仍在沙盒內派工，`mah dispatch` 會在建立 Run、消耗 Grant 之前以結束碼 14 停止。
 
-也可以設定環境變數 `ZMAHARNESS_HOME` 指定 zMAHarness 的資料夾（取代 `%LOCALAPPDATA%\zMAHarness`），必須是絕對路徑。設定後 `setup.ps1`、Doctor 與 `mah` 都只使用該位置，不會退回舊的 `MultiAgentHarness` 路徑。
+也可以設定環境變數 `ZMAHARNESS_HOME` 指定 zMAHarness 的資料夾（取代 `%LOCALAPPDATA%\zMAHarness`），必須是絕對路徑。設定後 `setup.ps1`、Doctor 與 `mah` 都只使用該位置，不會退回舊的 `MultiAgentHarness` 路徑。`state` 和 `worktrees` 預設會建在它底下，所以它不能位於任何 Git 工作區內（包括 zMAHarness clone 本身），也不能位於雲端同步資料夾內（例如 OneDrive），否則 CLI 會拒絕載入設定。
 
 ### 選填的輕量主控設定
 

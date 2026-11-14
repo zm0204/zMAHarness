@@ -55,6 +55,8 @@ The Skill was previously named `harness`. When setup is re-run, an old `harness`
 
 After installation, open the Git project you want to work on with your chosen controller. Invoke it with `$zmaharness` in Codex Desktop, or `/zmaharness` in Claude Code. You can also simply assign development work; when the collaboration conditions are met, the controller shows a **[zMAHarness Collaboration Proposal]** card in the conversation (shown as 「【zMAHarness 協作建議】」 in a Chinese environment), listing the trigger, the suggested model, the task and scope, the authorization limits, and the reason for collaborating. The card and replies use the language you asked in; the brand, model IDs, and command names stay in their original form.
 
+Before showing a card, the controller runs the read-only `mah preflight` check to confirm that the target is a local Git project, the local settings exist, and the Worker is enabled and its executable can be found. If the check fails, no card is shown; the controller explains why and continues the original task by itself. A "not a Git project" or "cannot check the Git project" message can also mean that the target is outside the controller's current working folder or that the sandbox blocks access to it; open the controller in that project and try again.
+
 - **Decline**　The controller immediately continues the original task by itself and will not ask again about the same issue.
 - **Continue collaborating**　You can choose the suggested model or the alternative model, or type to adjust the model or effort level, or to narrow the file scope. The controller prepares the data and a single-use Grant according to your choice, dispatches the work, verifies the result independently, and decides whether to adopt it.
 
@@ -82,7 +84,7 @@ Codex's Windows workspace-write sandbox redirects `%LOCALAPPDATA%` to `...\Packa
 
 The sandbox only allows writes to the working folder, so dispatch must run outside the sandbox. When the pre-card `mah preflight` check detects the sandbox, the card's authorization limits note that dispatch needs one approval to run outside the sandbox, and Codex asks you to approve it once at dispatch time. If dispatch still runs inside the sandbox, `mah dispatch` stops with exit code 14 before creating a Run or consuming the Grant.
 
-You can also set the environment variable `ZMAHARNESS_HOME` to choose the zMAHarness folder (replacing `%LOCALAPPDATA%\zMAHarness`); it must be an absolute path. Once set, `setup.ps1`, Doctor and `mah` all use only that location and never fall back to the old `MultiAgentHarness` path.
+You can also set the environment variable `ZMAHARNESS_HOME` to choose the zMAHarness folder (replacing `%LOCALAPPDATA%\zMAHarness`); it must be an absolute path. Once set, `setup.ps1`, Doctor and `mah` all use only that location and never fall back to the old `MultiAgentHarness` path. `state` and `worktrees` are created under it by default, so it must not be inside any Git work tree (including the zMAHarness clone itself) or inside a cloud-synced folder (such as OneDrive); otherwise the CLI refuses to load the settings.
 
 ### Optional lightweight controller settings
 

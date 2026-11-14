@@ -15,7 +15,8 @@ from mah import cli
 from mah.config import ConfigError, default_config_path, path_report, sandbox_redirect_detected, \
     user_local_appdata, zmaharness_home
 from mah.ledger import GrantLedger
-from mah.preflight import UNSANDBOXED_DISPATCH_REQUIRED, require_unsandboxed_dispatch
+from mah.preflight import GIT_NOT_INSTALLED, NOT_A_GIT_REPOSITORY, UNSANDBOXED_DISPATCH_REQUIRED, git_toplevel, \
+    preflight, require_unsandboxed_dispatch
 
 REPO = Path(__file__).resolve().parents[2]
 SANDBOX_LOCAL = r"C:\Users\user\AppData\Local\Packages\openai.codex_2p2nqsd0c76g0\AC\#!sandbox.{0F1E2D3C}"
@@ -180,6 +181,66 @@ class PreflightTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit_error:
             cli.main(["preflight", "--repo", str(self.repo), "--adapter", "unknown-x"])
         self.assertEqual(exit_error.exception.code, 2)
+
+
+class GitClassificationTests(unittest.TestCase):
+    """Only a certain cause gets its own advice; anything else is reported as a Git failure."""
+
+    HINT = "如果目標不在主控目前的工作資料夾內，請在該專案開啟主控後再試。"
+
+    @staticmethod
+    def completed(code, stderr="", stdout=""):
+        return subprocess.CompletedProcess(["git"], code, stdout=stdout, stderr=stderr)
+
+    @staticmethod
+    def git_result(outcome):
+        option = {"side_effect": outcome} if isinstance(outcome, BaseException) else {"return_value": outcome}
+        return patch("mah.preflight.subprocess.run", **option)
+
+    def classify(self, outcome):
+        with self.git_result(outcome):
+            return git_toplevel(Path("target"))
+
+    def test_each_git_failure_has_its_own_reason(self):
+        cases = {
+            "not_repository": (self.completed(128, "fatal: not a git repository (or any of the parent directories): .git\n"),
+                               NOT_A_GIT_REPOSITORY),
+            "not_installed": (FileNotFoundError(2, "The system cannot find the file specified"), GIT_NOT_INSTALLED),
+            "launch_denied": (PermissionError(13, "Permission denied"),
+                              f"無法啟動 git：[Errno 13] Permission denied。可能是被主控的沙盒限制；{self.HINT}"),
+            "stderr_denied": (self.completed(128, "\nfatal: cannot change to 'B': Permission denied\nsecond line\n"),
+                              f"無法檢查目標的 Git 專案：fatal: cannot change to 'B': Permission denied。{self.HINT}"),
+            "timeout": (subprocess.TimeoutExpired(["git"], 10),
+                        f"無法檢查目標的 Git 專案：TimeoutExpired: Command '['git']' timed out after 10 seconds。{self.HINT}"),
+            "other_oserror": (OSError(22, "Invalid argument"),
+                              f"無法檢查目標的 Git 專案：OSError: [Errno 22] Invalid argument。{self.HINT}"),
+            "silent_failure": (self.completed(1), f"無法檢查目標的 Git 專案：git 結束碼 1，沒有錯誤訊息。{self.HINT}"),
+        }
+        reasons = {}
+        for name, (outcome, expected) in cases.items():
+            with self.subTest(case=name):
+                root, reason = self.classify(outcome)
+                self.assertIsNone(root)
+                self.assertEqual(reason, expected)
+                reasons[name] = reason
+        self.assertEqual(len(set(reasons.values())), len(reasons))
+        self.assertEqual([name for name, reason in reasons.items() if reason == NOT_A_GIT_REPOSITORY], ["not_repository"])
+        self.assertEqual([name for name, reason in reasons.items() if "請安裝 Git" in reason], ["not_installed"])
+
+    def test_a_working_git_returns_the_root(self):
+        self.assertEqual(self.classify(self.completed(0, stdout="C:/work/project\n")), ("C:/work/project", None))
+
+    def test_preflight_reports_git_failures_without_a_repo_root(self):
+        for outcome in (PermissionError(13, "Permission denied"), FileNotFoundError(2, "missing"),
+                        self.completed(128, "fatal: not a git repository\n")):
+            with self.subTest(outcome=outcome), TemporaryDirectory() as home, \
+                    clean_environment(ZMAHARNESS_HOME=home):
+                _, expected = self.classify(outcome)
+                with self.git_result(outcome):
+                    report = preflight(Path("target"), "agy-print")
+                self.assertEqual((report["repo_root"], report["ok"]), (None, False))
+                self.assertEqual(report["reasons"][0], expected)
+                self.assertNotIn(expected, report["reasons"][1:])
 
 
 class SandboxDispatchTests(unittest.TestCase):

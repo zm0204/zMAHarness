@@ -15,23 +15,45 @@ UNSANDBOXED_DISPATCH_REQUIRED = (
 )
 
 
+NOT_A_GIT_REPOSITORY = "目標不是本機 Git 專案；雲端硬碟、網頁等資料不在協作範圍內。"
+GIT_NOT_INSTALLED = "找不到 git 執行檔，請安裝 Git。"
+OUTSIDE_WORKSPACE_HINT = "如果目標不在主控目前的工作資料夾內，請在該專案開啟主控後再試。"
+
+
+def _git_failed(detail):
+    return f"無法檢查目標的 Git 專案：{detail}。{OUTSIDE_WORKSPACE_HINT}"
+
+
 def git_toplevel(path):
-    """`git rev-parse --show-toplevel` for path, or None when it is not a local Git work tree."""
+    """Return (root, None) from `git rev-parse --show-toplevel`, or (None, reason).
+
+    A cause is named only when it is certain; anything else is reported as a Git failure with
+    the original error, so a sandbox denial is never mistaken for "not a repository".
+    """
     try:
         result = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
+    except FileNotFoundError:
+        return None, GIT_NOT_INSTALLED
+    except PermissionError as exc:
+        return None, f"無法啟動 git：{exc}。可能是被主控的沙盒限制；{OUTSIDE_WORKSPACE_HINT}"
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return None, _git_failed(f"{type(exc).__name__}: {exc}")
     top = result.stdout.strip()
-    return top if result.returncode == 0 and top else None
+    if result.returncode == 0 and top:
+        return top, None
+    if result.returncode != 0 and "not a git repository" in result.stderr.lower():
+        return None, NOT_A_GIT_REPOSITORY
+    first_line = next((line.strip() for line in result.stderr.splitlines() if line.strip()), None)
+    return None, _git_failed(first_line or f"git 結束碼 {result.returncode}，沒有錯誤訊息")
 
 
 def preflight(repo, adapter, config_path=None):
     """Read-only: no file writes, no network, no quota query and no ledger. Returns the report."""
     reasons = []
-    repo_root = git_toplevel(repo)
-    if repo_root is None:
-        reasons.append("目標不是本機 Git 專案；雲端硬碟、網頁等資料不在協作範圍內。")
+    repo_root, git_reason = git_toplevel(repo)
+    if git_reason is not None:
+        reasons.append(git_reason)
 
     # A missing default file still loads the built-in defaults, so the remaining checks stay informative.
     path = Path(config_path).expanduser().resolve() if config_path is not None else default_config_path()

@@ -23,8 +23,9 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 `python -B -m mah preflight --repo <目標專案根目錄> --adapter <Adapter>`
 
 - 輸出 JSON 的 `ok` 為 `false`（結束碼 30）時不出卡。用一句話告訴使用者原因（取自 `reasons`），然後由主控 Agent 自己繼續原任務。
+- `--repo` 使用主控目前工作資料夾所屬的 Git 專案。要審查的檔案不在目前的工作資料夾內時，不出卡，請使用者在該專案開啟主控。
 - 雲端硬碟、網頁等不在本機 Git 專案裡的資料，不在協作範圍內，不出卡。
-- `needs_unsandboxed_dispatch` 為 `true` 時，在卡片的【授權限制】加一句「派工時需核准一次沙盒外執行」。
+- `needs_unsandboxed_dispatch` 會影響卡片的【授權限制】，規則見下方「對話內提議」。
 
 ## 對話內提議
 
