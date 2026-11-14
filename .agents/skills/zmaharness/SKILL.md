@@ -24,7 +24,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 
 - 輸出 JSON 的 `ok` 為 `false`（結束碼 30）時不出卡。用一句話告訴使用者原因（取自 `reasons`），然後由主控 Agent 自己繼續原任務。
 - `--adapter` 依下方「Adapter 路由」決定。Claude 模型先檢查 `claude-print`，不 ok 時改檢查 `agy-print`；兩個都不 ok 就不出卡。
-  GPT 模型檢查 `codex-exec`，不 ok 就不出卡。
+  GPT 模型檢查 `codex-exec`。若 GPT 是主控主動提議的候選且檢查不 ok，則回到原推薦規則並檢查該 Adapter。
 - `--repo` 使用主控目前工作資料夾所屬的 Git 專案。要審查的檔案不在目前的工作資料夾內時，不出卡，請使用者在該專案開啟主控。
 - 雲端硬碟、網頁等不在本機 Git 專案裡的資料，不在協作範圍內，不出卡。
 - `needs_unsandboxed_dispatch` 會影響卡片的【授權限制】，規則見下方「對話內提議」。
@@ -45,7 +45,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 - 【任務與範圍】顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
 - 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。這是對話核准（`codex_prompt`）與 Context-Bundle 的固定次數；本機設定 `approval.mode = "manual_cli"` 時，Disposable Worktree 卡片可到 `limits.max_dispatches_per_grant`，此時顯示實際卡片的次數，並註明「需在終端機親手核准」。出卡前檢查的 `needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
-- 【為什麼建議協作？】用一至兩句白話說明預期收益及選擇該模型的原因。
+- 【為什麼建議協作？】用一句白話說明本次協作的收益及選模原因，不提私人專案名稱。
 
 依提問工具實際提供的欄位排版。下方選項範本定義各選項的意思，依工具能力分配到相應欄位。
 
@@ -54,7 +54,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
   選項用短 `label`。每個協作選項的 `description` 用一行列出模型 · effort、任務、授權。
   每個協作選項的 `preview` 使用 Markdown，以 `## 建議方案` 或 `## 備選方案` 開頭，
   依序列出粗體欄位「模型」、「任務」、「模式」、「範圍」、「授權」。模型 ID 與 effort 用行內程式碼，
-  範圍以條列顯示實際檔案與可查閱的關聯範圍。最後以 `### 為什麼？` 加一至兩句說明該方案。
+  範圍以條列顯示實際檔案與可查閱的關聯範圍。最後以 `### 為什麼？` 加一句說明該方案，不提私人專案名稱。
   「不同意」的 `preview` 以 Markdown 條列四項：不派工、不呼叫外部模型、立即繼續原任務、同一任務不再追問。
 - **有 `header`、`description`，無 `preview`**（例如 Codex Plan 模式的 `request_user_input`）。
   `header` 填 `zMAHarness`，問題文字放完整五項，每項一行。選項用 `label` 加 `description`，
@@ -74,13 +74,12 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 **Adapter 路由。** Gemini 系列用 `agy-print`。Claude 系列優先用 `claude-print`，模型寫 Claude 的名稱（`sonnet`、`opus`）加上 effort。
 `claude-print` 的出卡前檢查不 ok 時，Claude 模型改用 `agy-print` 的 `claude-sonnet-5-5-<effort>`、`claude-opus-5-5-<effort>` ID；
 兩個都不 ok 就不出卡。卡片的【建議模型】只顯示模型與 effort，不顯示 Adapter 名稱。
-GPT 系列（例如 `gpt-5.6-luna`、`gpt-5.6-terra`）走 `codex-exec`，effort 只能 `low`、`medium`、`high`、`xhigh`。
+GPT 系列（例如 `gpt-5.6-terra`、`gpt-5.6-sol`）走 `codex-exec`，effort 只能 `low`、`medium`、`high`、`xhigh`。
 `codex-exec` 只支援 Context-Bundle 與唯讀模板；需要 Disposable Worktree 時不要建議 GPT 模型。
 **主控是 Codex 時，卡片不主動建議 `codex-exec`**（同家族，缺少異質視角），只有使用者明確指定 GPT 模型時才用。
-主控是 Claude Code 時，GPT 模型可作為異質選項。
 
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
-這類任務的選項 2 建議 `gemini-4-argon-high · high`，選項 3 沿用備選規則。使用者手打指定時不受此限。
+這類任務一般建議 `gemini-4-argon-high · high`，Claude Code 的 GPT 選項依下方規則。使用者手打指定時不受此限。
 
 依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。
 
@@ -90,7 +89,8 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 
 核准後嚴禁自動從 Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
 
-選項 2 顯示與卡片相同的建議模型。若選項 2 是 Argon 或 Claude，選項 3 用
+主控是 Claude Code，且一般 Review 或 T1 第二意見符合 Context-Bundle 時，若本機 `codex debug models` 確認對應 GPT 可用、兩個 Adapter 均通過出卡前檢查，則【建議模型】與選項 2 用 GPT（Review 用 `gpt-5.6-terra · medium`，T1 第二意見用 `gpt-5.6-sol · high`），選項 3 用 `gemini-4-argon-high · high`。
+其他情況，選項 2 顯示與卡片相同的建議模型。若選項 2 是 Argon 或 Claude，選項 3 用
 `gemini-3.8-flash-low · low` 供節省額度。若選項 2 是 Flash Low 或 Flash Medium，
 選項 3 用 `gemini-4-argon-high · high` 供一鍵升級。
 
