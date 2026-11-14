@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @unittest.skipUnless(os.name == "nt", "setup.ps1 requires Windows")

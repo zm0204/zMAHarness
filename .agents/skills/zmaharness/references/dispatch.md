@@ -10,7 +10,7 @@
 準備檔及工作目錄放在該設定指定的本機目錄，嚴禁在目標專案旁自建 `.harness-*` 臨時目錄。
 
 zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card JSON 的 `repo_root`
-皆指向目前開發的**目標 Git 專案根目錄**，例如 BatchTable。以目標專案的
+皆指向目前開發的**目標 Git 專案根目錄**，例如你正在開發的專案。以目標專案的
 `git rev-parse --show-toplevel` 取得根目錄，使用實際目標專案準備資料及派工。
 使用 `agy-print` 派工時，全程僅使用命令列執行，禁止動用 Computer Use 查看 Antigravity GUI 設定、模型清單或查詢 `/usage` 額度。
 `codex-exec` 等 CLI Adapter 也遵循相同原則。實際模型和 effort 以卡片回覆確認的組合為準，日常派工略過前後額度查詢。

@@ -21,10 +21,10 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 
 | Worker | 驗收範圍 |
 | --- | --- |
-| Gemini | **真實派工**：T5 觸發 BatchTable 跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板及 Disposable Worktree 的真實端到端流程尚未驗收。 |
+| Gemini | **真實派工**：T5 觸發 作者的實際 Python 專案（表格比對工具）跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板及 Disposable Worktree 的真實端到端流程尚未驗收。 |
 | Claude | Sonnet、Opus 已列為 `agy-print` 的候選模型，真實 Worker 派工尚未驗收。 |
-| Claude（`claude-print`） | **真實派工已驗收**：BatchTable，`sonnet · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。 |
-| GPT（`codex-exec`） | **真實派工已驗收**：BatchTable，主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。只支援 Context-Bundle。 |
+| Claude（`claude-print`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），`sonnet · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。 |
+| GPT（`codex-exec`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。只支援 Context-Bundle。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |
 
 Skill 所列模型 ID 以 2026 年 11 月的 `agy models` 為準，日後可能隨 CLI 或帳號可用模型變動。
@@ -65,7 +65,7 @@ Set-Location zMAHarness
 
 重跑會保留現有 TOML 和 V1 本機設定，並更新引擎註冊及兩處 Skill。安裝只需要一般使用者權限，Python 端只用標準函式庫。Doctor 可離線檢查 CLI 匯入、`agy.exe` 的安裝線索、本機 TOML 與兩處 Skill 的一致性。實際登入、模型可用性及主控介面的 Skill 載入需在使用時確認。
 
-Doctor 的每一行以 `[通過]`、`[警告]`、`[需人工驗證]` 或 `[失敗]` 開頭。只有 `[失敗]` 會讓結束碼變成 1；`[需人工驗證]` 是 Doctor 無法離線確認的項目（例如登入狀態），不代表安裝有問題。沒有安裝的選用 Worker 會顯示為 `[需人工驗證]`，不使用該 Worker 時可以忽略。
+Doctor 的每一行以 `[通過]`、`[警告]`、`[需人工驗證]` 或 `[失敗]` 開頭。只有 `[失敗]` 會讓結束碼變成 1；`[需人工驗證]` 是 Doctor 無法離線確認的項目（例如登入狀態），不代表安裝有問題。沒有安裝的選用 Worker 會顯示為 `[需人工驗證]`，不使用該 Worker 時可以忽略。輸出最後的「V1 檔案交接（舊版相容）」段落只與舊的 GUI 檔案交接流程有關。
 
 舊安裝的本機 TOML 會保留原本的 `adapters.enabled`，不會自動加入新的 Worker。要使用 Claude Worker，請手動把 `"claude-print"` 加進 `adapters.enabled`；Doctor 找到 claude 執行檔但尚未啟用時會提示寫法。
 
@@ -136,13 +136,13 @@ suggested_controller = "Codex Sol High"
 在 zMAHarness clone 根目錄執行以下命令。測試使用合成資料及本機替身。
 
 ```powershell
-python -B -m unittest -q
+python -B -m unittest discover -s tests/v1 -q
 python -B -m unittest discover -s tests/v2 -q
 ```
 
 若 Windows 未開啟開發人員模式，且一般使用者沒有建立符號連結的權限，相關測試會顯示為略過，屬於正常現象；有權限的環境仍會執行完整斷言。
 
-V1 的檔案交接與中斷復原規則見 [角色規範](ROLES.md) 和 [V1 盤點](docs/v2/V1_INVENTORY.md)。要新增 Worker Adapter，見 [docs/ADAPTERS.md](docs/ADAPTERS.md)。請讓本機設定、SQLite、任務紀錄及私人驗證報告留在本機。Git 白名單只納入專案程式、通用文件與已去識別化的測試資料。
+V1 的檔案交接與中斷復原規則見 [角色規範](docs/ROLES.md) 和 [V1 盤點](docs/v2/V1_INVENTORY.md)。要新增 Worker Adapter，見 [docs/ADAPTERS.md](docs/ADAPTERS.md)。請讓本機設定、SQLite、任務紀錄及私人驗證報告留在本機。Git 白名單只納入專案程式、通用文件與已去識別化的測試資料。
 
 ## 開發方式
 

@@ -4,11 +4,19 @@ param()
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'harness-config.ps1')
 $script:Failed = $false
+$script:LegacyLines = New-Object System.Collections.Generic.List[string]
 
 function Report-Check {
     param([string]$Status, [string]$Name, [string]$Detail)
     if ($Status -eq '失敗') { $script:Failed = $true }
     Write-Output "[$Status] ${Name}：$Detail"
+}
+
+function Report-Legacy {
+    # V1 檔案交接的項目：結束碼規則相同，訊息留到最後的「舊版相容」段落顯示。
+    param([string]$Status, [string]$Name, [string]$Detail)
+    if ($Status -eq '失敗') { $script:Failed = $true }
+    $script:LegacyLines.Add("[$Status] ${Name}：$Detail")
 }
 
 function Find-App {
@@ -20,26 +28,26 @@ function Find-App {
             if ([IO.Path]::GetExtension($candidate) -ine '.exe' -or -not [IO.File]::Exists($candidate)) {
                 throw "指定的 .exe 不存在：$candidate"
             }
-            Report-Check '通過' "$Name 安裝線索" "已找到指定檔案：$candidate"
+            Report-Legacy '通過' "$Name 安裝線索" "已找到指定檔案：$candidate"
         }
-        catch { Report-Check '失敗' "$Name 安裝線索" $_.Exception.Message }
+        catch { Report-Legacy '失敗' "$Name 安裝線索" $_.Exception.Message }
         return
     }
 
     $command = Get-Command "$Name.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) {
-        Report-Check '通過' "$Name 安裝線索" "PATH 中有執行檔：$($command.Source)"
+        Report-Legacy '通過' "$Name 安裝線索" "PATH 中有執行檔：$($command.Source)"
         return
     }
     foreach ($candidate in $KnownPaths) {
         if ($candidate -and [IO.File]::Exists($candidate)) {
-            Report-Check '通過' "$Name 安裝線索" "已找到常見安裝位置：$candidate"
+            Report-Legacy '通過' "$Name 安裝線索" "已找到常見安裝位置：$candidate"
             return
         }
     }
     $entry = $StartApps | Where-Object { $_.Name -in @($Name, "OpenAI $Name", "Google $Name") } | Select-Object -First 1
-    if ($entry) { Report-Check '通過' "$Name 安裝線索" "開始功能表有「$($entry.Name)」項目。" }
-    else { Report-Check '需人工驗證' "$Name 安裝線索" '未偵測到安裝。請檢查桌面應用程式，或在本機設定填入執行檔路徑。' }
+    if ($entry) { Report-Legacy '通過' "$Name 安裝線索" "開始功能表有「$($entry.Name)」項目。" }
+    else { Report-Legacy '需人工驗證' "$Name 安裝線索" '未偵測到安裝。請檢查桌面應用程式，或在本機設定填入執行檔路徑。' }
 }
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
@@ -75,16 +83,16 @@ try {
         $shared.quota.stopOnUnknownModelOrQuota -ne $true) {
         throw '交接或額度規則與本階段的保護條件不符。'
     }
-    Report-Check '通過' '共用設定' '已讀取版本 1，交接與額度規則符合範本。GUI 自動化維持停用。'
+    Report-Legacy '通過' '共用設定' '已讀取版本 1，交接與額度規則符合範本。GUI 自動化維持停用。'
 }
-catch { Report-Check '失敗' '共用設定' $_.Exception.Message }
+catch { Report-Legacy '失敗' '共用設定' $_.Exception.Message }
 
 $local = $null
 try {
     $local = Read-HarnessLocalConfig (Join-Path $PSScriptRoot '.local/settings.json')
-    Report-Check '通過' '本機設定' '已讀取 .local/settings.json。'
+    Report-Legacy '通過' '本機設定' '已讀取 .local/settings.json。'
 }
-catch { Report-Check '失敗' '本機設定' "請執行 setup.ps1 並檢查本機設定。$($_.Exception.Message)" }
+catch { Report-Legacy '失敗' '本機設定' "請執行 setup.ps1 並檢查本機設定。$($_.Exception.Message)" }
 
 $python = $null
 $pythonCommand = $null
@@ -160,17 +168,17 @@ if ($local) {
         if ([IO.File]::ReadAllText($probeFile) -cne $probeValue) { throw '工作目錄回讀內容不符。' }
         [IO.File]::Delete($probeFile)
         $created = $false
-        Report-Check '通過' '工作目錄讀寫' $workspace
+        Report-Legacy '通過' '工作目錄讀寫' $workspace
     }
-    catch { Report-Check '失敗' '工作目錄讀寫' $_.Exception.Message }
+    catch { Report-Legacy '失敗' '工作目錄讀寫' $_.Exception.Message }
     finally {
         if ($created) {
             try { [IO.File]::Delete($probeFile) }
-            catch { Report-Check '失敗' '工作目錄清理' "無法移除本次探針：$probeFile" }
+            catch { Report-Legacy '失敗' '工作目錄清理' "無法移除本次探針：$probeFile" }
         }
     }
 }
-else { Report-Check '需人工驗證' '工作目錄讀寫' '讀取本機設定後才可檢查工作目錄。' }
+else { Report-Legacy '需人工驗證' '工作目錄讀寫' '讀取本機設定後才可檢查工作目錄。' }
 
 $startApps = @()
 if (Get-Command Get-StartApps -ErrorAction SilentlyContinue) {
@@ -181,11 +189,7 @@ if ($localAppData) { $antigravityPaths += Join-Path $localAppData 'Programs/anti
 if ($env:ProgramFiles) { $antigravityPaths += Join-Path $env:ProgramFiles 'Antigravity/Antigravity.exe' }
 Find-App 'Codex' $local.codexExecutable @() $startApps
 Find-App 'Antigravity' $local.antigravityExecutable $antigravityPaths $startApps
-Report-Check '需人工驗證' 'Codex 工作階段' '登入、Sol 與 Terra Low 的可用性，以及 Computer Use 的權限與操作能力。'
-Report-Check '需人工驗證' 'Antigravity 工作階段' '登入、Gemini Flash 的實際選項、剩餘額度與送出回執。'
-Report-Check '需人工驗證' 'GUI 與平台規範' '確認允許的操作方式，並人工監看權限提示、逾時中止及檔案交接。'
 
-Write-Output '--- zMAHarness V2 環境 ---'
 $v2Settings = $null
 $v2Config = $null
 if ($paths) { $v2Config = $paths.config_path }
@@ -284,6 +288,22 @@ if ($python -and -not $pathsFailed) {
         else { Report-Check '通過' 'claude-print' '已啟用，並找到 claude 原生執行檔。' }
     }
     catch { Report-Check '需人工驗證' 'claude-print' $_.Exception.Message }
+
+    # codex-exec 只查設定與執行檔位置，不執行 codex。
+    try {
+        $codexQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; c = load_config(None); print(json.dumps({''found'': executable_lookup(''codex-exec'')(c) is not None, ''enabled'': adapter_enabled(c, ''codex-exec'')}))'
+        $codexRaw = & (Get-HarnessPathPython) -I -B -c $codexQuery $PSScriptRoot
+        if ($LASTEXITCODE -ne 0) { throw '無法檢查 codex-exec。' }
+        $codex = ($codexRaw -join "`n") | ConvertFrom-Json
+        if (-not $codex.found) {
+            Report-Check '需人工驗證' 'codex-exec' '未找到 codex 原生執行檔（.exe）。使用 GPT Worker 前請安裝 Codex CLI，或在本機 TOML 把 codex_command 設成 codex.exe 的絕對路徑。'
+        }
+        elseif (-not $codex.enabled) {
+            Report-Check '需人工驗證' 'codex-exec' '已找到 codex 原生執行檔，但 codex-exec 不在 adapters.enabled。要使用 GPT Worker，請在本機 TOML 的 adapters.enabled 加入 "codex-exec"。'
+        }
+        else { Report-Check '通過' 'codex-exec' '已啟用，並找到 codex 原生執行檔。' }
+    }
+    catch { Report-Check '需人工驗證' 'codex-exec' $_.Exception.Message }
 }
 
 $skillSource = Join-Path $PSScriptRoot '.agents/skills/zmaharness'
@@ -321,6 +341,10 @@ if ($env:USERPROFILE) {
         catch { Report-Check '警告' '舊版技能' "無法檢查 ${legacyRoot}：$($_.Exception.Message)" }
     }
 }
+
+Write-Output '--- V1 檔案交接（舊版相容） ---'
+Write-Output '以下項目只用於 V1 的 GUI 檔案交接流程；只使用 CLI Worker 時，「需人工驗證」的項目可以忽略。'
+foreach ($line in $script:LegacyLines) { Write-Output $line }
 
 if ($script:Failed) { exit 1 }
 Write-Output '已完成可自動檢查的項目。標為「需人工驗證」的項目仍待確認。'

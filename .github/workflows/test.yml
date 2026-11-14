@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: V1 offline tests
-        run: python -B -m unittest -q
+        run: python -B -m unittest discover -s tests/v1 -q
       - name: V2 offline tests
         run: python -B -m unittest discover -s tests/v2 -q
       - name: Symlink regression runs on CI

@@ -96,7 +96,11 @@ function Get-HarnessPathPython {
     $storeAlias = $false
     foreach ($command in @(Get-Command python.exe -All -CommandType Application -ErrorAction SilentlyContinue)) {
         $result = Get-HarnessPythonProbe $command.Source
-        if ($result) { return $command.Source }
+        if ($result) {
+            # 替身排在可用的 Python 之前：只記錄，由 setup.ps1 顯示警告。
+            $script:HarnessStoreAliasFirst = $storeAlias
+            return $command.Source
+        }
         if ($command.Source -like '*\Microsoft\WindowsApps\*') { $storeAlias = $true }
     }
     throw (Get-HarnessPythonFailureMessage -StoreAlias:$storeAlias)

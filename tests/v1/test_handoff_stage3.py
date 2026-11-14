@@ -14,6 +14,9 @@ from unittest.mock import patch
 from handoff_sim import LocalCoordinator
 from test_handoff_stage2 import EXPECTED, REQUEST, MockAntigravity, publish, rendered, success
 
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+
 
 class RecoveryTests(unittest.TestCase):
     def setUp(self):
@@ -45,7 +48,8 @@ LocalCoordinator(Path(sys.argv[1])).run(
 """
         process = subprocess.run([sys.executable, '-B', '-c', child, str(self.root),
                                   'yes' if with_result else 'no'],
-                                 cwd=Path(__file__).resolve().parent, timeout=10)
+                                 cwd=ROOT, env=os.environ | {'PYTHONPATH': os.pathsep.join([str(ROOT), str(HERE)])},
+                                 timeout=10)
         self.assertEqual(process.returncode, 73)
 
     def test_process_dies_after_handoff_and_recovery_accepts_existing_result(self):

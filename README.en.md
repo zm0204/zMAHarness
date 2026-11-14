@@ -21,10 +21,10 @@ In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13
 
 | Worker | Acceptance scope |
 | --- | --- |
-| Gemini | **Real dispatch**: T5 triggered a cross-project Second Opinion on BatchTable, requesting `gemini-3.8-flash-high · high` via `agy-print` in Context-Bundle mode. The controller adopted the suggestions after independent checking, and the ledger recorded `SUCCEEDED`/`ACCEPTED`. **Offline tests**: re-collection and the Verifier are validated against a de-identified real receipt from a Flash Low Review. Real end-to-end flows for other models and effort levels, the Research template, and Disposable Worktree have not been accepted yet. |
+| Gemini | **Real dispatch**: T5 triggered a cross-project Second Opinion on the author's real Python project (a table-comparison tool), requesting `gemini-3.8-flash-high · high` via `agy-print` in Context-Bundle mode. The controller adopted the suggestions after independent checking, and the ledger recorded `SUCCEEDED`/`ACCEPTED`. **Offline tests**: re-collection and the Verifier are validated against a de-identified real receipt from a Flash Low Review. Real end-to-end flows for other models and effort levels, the Research template, and Disposable Worktree have not been accepted yet. |
 | Claude | Sonnet and Opus are listed as candidate models for `agy-print`. Real worker dispatch has not been accepted yet. |
-| Claude (`claude-print`) | **Real dispatch accepted**: BatchTable, `sonnet · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. |
-| GPT (`codex-exec`) | **Real dispatch accepted**: BatchTable, Claude Code as the controller, `gpt-5.6-terra · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. Context-Bundle only. |
+| Claude (`claude-print`) | **Real dispatch accepted**: the author's real Python project (a table-comparison tool), `sonnet · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. |
+| GPT (`codex-exec`) | **Real dispatch accepted**: the author's real Python project (a table-comparison tool), Claude Code as the controller, `gpt-5.6-terra · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. Context-Bundle only. |
 | Terra GUI | V1 file handoff was once tested in an isolated environment. Formal V2 GUI dispatch has not been accepted yet. |
 
 The model IDs listed in the Skill follow `agy models` as of November 2026 and may change with the CLI or with the models available to your account.
@@ -65,7 +65,7 @@ Setup creates `.local/settings.json` and a working directory inside the clone (u
 
 Re-running keeps the existing TOML and V1 local settings, and updates the engine registration and both Skill copies. Installation needs only standard user privileges, and the Python side uses only the standard library. Doctor can check offline the CLI import, hints of an `agy.exe` installation, the local TOML, and the consistency of both Skill copies. Actual sign-in, model availability, and Skill loading in the controller UI must be confirmed when you use it.
 
-Each Doctor line starts with `[通過]` (pass), `[警告]` (warning), `[需人工驗證]` (needs manual check), or `[失敗]` (fail); Doctor output is in Chinese. Only `[失敗]` makes the exit code 1. `[需人工驗證]` marks items Doctor cannot confirm offline (such as sign-in state) and does not mean the installation is broken. An optional Worker that is not installed shows as `[需人工驗證]`; ignore it if you do not use that Worker.
+Each Doctor line starts with `[通過]` (pass), `[警告]` (warning), `[需人工驗證]` (needs manual check), or `[失敗]` (fail); Doctor output is in Chinese. Only `[失敗]` makes the exit code 1. `[需人工驗證]` marks items Doctor cannot confirm offline (such as sign-in state) and does not mean the installation is broken. An optional Worker that is not installed shows as `[需人工驗證]`; ignore it if you do not use that Worker. The final section, 「V1 檔案交接（舊版相容）」 (V1 file handoff, legacy), only concerns the old GUI file handoff flow.
 
 An existing local TOML keeps its `adapters.enabled` list and never gains new Workers automatically. To use the Claude Worker, add `"claude-print"` to `adapters.enabled` yourself; Doctor shows the line to use when it finds the claude executable but the Worker is not enabled.
 
@@ -136,13 +136,13 @@ The following items are **planned and not yet implemented**.
 Run the following commands from the root of the zMAHarness clone. The tests use synthetic data and local stand-ins.
 
 ```powershell
-python -B -m unittest -q
+python -B -m unittest discover -s tests/v1 -q
 python -B -m unittest discover -s tests/v2 -q
 ```
 
 On Windows without Developer Mode, symlink-related tests normally show as skipped if the user cannot create symlinks. Environments with that permission still run the full assertions.
 
-For V1 file handoff and interruption recovery rules, see the [role rules](ROLES.md) and the [V1 inventory](docs/v2/V1_INVENTORY.md) (both in Chinese). To add a Worker Adapter, see [docs/ADAPTERS.md](docs/ADAPTERS.md). Keep local settings, SQLite, task records, and private verification reports on your machine. The Git whitelist only includes project code, general documentation, and de-identified test data.
+For V1 file handoff and interruption recovery rules, see the [role rules](docs/ROLES.md) and the [V1 inventory](docs/v2/V1_INVENTORY.md) (both in Chinese). To add a Worker Adapter, see [docs/ADAPTERS.md](docs/ADAPTERS.md). Keep local settings, SQLite, task records, and private verification reports on your machine. The Git whitelist only includes project code, general documentation, and de-identified test data.
 
 ## How this was built
 

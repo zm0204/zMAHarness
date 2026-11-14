@@ -3,7 +3,7 @@
 # MultiAgentHarness Phase 0A｜V1 原始碼盤點與相容性映射
 
 - 盤點日期為 2026-11-11（台灣時間）。工作區為 `MultiAgentHarness`，分支 `main`，基準為 `b7277e42bdc120296ba0f52f8242c899171a878e`。開始時 `git status --short --branch --untracked-files=all` 顯示本機 `main` 與既有的 `origin/main` 追蹤引用一致，無待提交變更。兩份已複製的正式文件當時受忽略規則排除。
-- 依 [正式規格](MultiAgentHarness_V2_Final_Spec.md) 及 [實作計畫](MultiAgentHarness_V2_Implementation_Plan.md) 定義 V2 目標。V1 行為以該提交的程式與測試為準。本文的映射是後續實作建議。
+- 依 [正式規格](../archive/MultiAgentHarness_V2_Final_Spec.md) 及 [實作計畫](../archive/MultiAgentHarness_V2_Implementation_Plan.md) 定義 V2 目標。V1 行為以該提交的程式與測試為準。本文的映射是後續實作建議。
 - `git log -n 5 --oneline` 依序為 `b7277e4`、`617d0db`、`179d02f`、`42ae6ea`、`1c483c6`。
 
 ## 1. 執行環境、檔案與離線測試
@@ -11,11 +11,11 @@
 | 檔案 | V1 責任 |
 | --- | --- |
 | [handoff_sim.py](../../handoff_sim.py) | Python 模組。提供 `Outcome`、`validate_handoff` 與 `LocalCoordinator(directory)`，供呼叫者傳入工作目錄和模擬工作者，完成收據、一次送出、交接驗收及復原。 |
-| [test_handoff_stage2.py](../../test_handoff_stage2.py)、[test_handoff_stage3.py](../../test_handoff_stage3.py) | 標準函式庫 `unittest` 的 11 項可靠性測試和 13 項復原測試。第二份以本機 Python 子程序及合成資料模擬強制中斷。 |
+| [test_handoff_stage2.py](../../tests/v1/test_handoff_stage2.py)、[test_handoff_stage3.py](../../tests/v1/test_handoff_stage3.py) | 標準函式庫 `unittest` 的 11 項可靠性測試和 13 項復原測試。第二份以本機 Python 子程序及合成資料模擬強制中斷。 |
 | [setup.ps1](../../setup.ps1)、[harness-config.ps1](../../harness-config.ps1) | 建立本機設定與工作區。透過同目錄暫存檔與移動保留既有設定。共用函式解析 JSON、檢查本機欄位並解析相對或絕對路徑。 |
 | [doctor.ps1](../../doctor.ps1) | 使用本機 Python 記憶體 SQLite 做環境探針，檢查 Windows、PowerShell、設定與工作區讀寫，查找應用程式安裝線索。登入、模型、額度與 GUI 能力列為需人工驗證。 |
 | [config/defaults.json](../../config/defaults.json)、[config/local.example.json](../../config/local.example.json) | 前者是供人和 Agent 遵循的路由、交接及額度設定，Doctor 會檢查其中部分欄位。後者是 `.local/settings.json` 的範本，預設工作目錄為 `.local/workspace`。Python 模組由呼叫者傳入路徑與期限，未自動載入這兩份設定。 |
-| [README.md](../../README.md)、[ROLES.md](../../ROLES.md)、[DISCLAIMER.md](../../DISCLAIMER.md)、[.gitignore](../../.gitignore) | 部署指引、人工派工角色、風險告知及 Git 白名單。 |
+| [README.md](../../README.md)、[ROLES.md](../ROLES.md)、[DISCLAIMER.md](../../DISCLAIMER.md)、[.gitignore](../../.gitignore) | 部署指引、人工派工角色、風險告知及 Git 白名單。 |
 
 V1 的可執行入口為 `.\setup.ps1`、`.\doctor.ps1` 及 Python 測試指令，交接流程透過匯入 Python 模組使用。基準內沒有 `mah`、MCP、套件清單或第三方 Python 依賴。Python 模組使用標準函式庫 `sqlite3`、`hashlib`、`uuid`、`pathlib`、`json`、`time`、`os.fsync`、`contextlib`、`dataclasses`、`math` 與 `re`。測試另外使用標準函式庫的 `unittest.mock`、`tempfile`、`threading`、`concurrent.futures`、`subprocess` 等。
 
@@ -30,7 +30,7 @@ V1 的可執行入口為 `.\setup.ps1`、`.\doctor.ps1` 及 Python 測試指令�
 
 ```powershell
 $env:PYTHONIOENCODING = 'utf-8'
-python -B -m unittest discover -s . -p 'test_*.py' -v
+python -B -m unittest discover -s tests/v1 -v
 ```
 
 | 時點 | 實際結果 | unittest 耗時 | PowerShell 牆鐘時間 |
@@ -77,7 +77,7 @@ python -B -m unittest discover -s . -p 'test_*.py' -v
 - **已實作的離線流程。** `claim()` 用 `BEGIN IMMEDIATE` 序列化同一任務的查詢與新增，同 ID 同指紋回報 `DUPLICATE`，不同指紋回報 `TASK_ID_CONFLICT`。正常流程僅允許以 `WHERE status='CLAIMED' AND run_id=?` 取得送出權。`record()` 用允許的來源狀態更新，避免覆寫已定案收據。這是單一資料庫內的同任務防重複，不是跨任務的併發閘門。[防重複與條件更新](../../handoff_sim.py#L56)
 - **已實作的 V1 原子發布。** `run()` 先提交 `DISPATCHING`、期限與驗收條件，再建立專用子目錄。它以獨占模式寫 `task.md.tmp`，執行 `flush()`、`fsync()`，再用同目錄 `replace()` 發布 `task.md`。測試替身依序用暫存檔發布 `result.md` 及 `DONE`。正式模組負責讀取和驗收結果，未包含通用結果發布器。[任務發布](../../handoff_sim.py#L104)、[替身發布](../../test_handoff_stage2.py#L17)
 - **已實作的離線驗收及復原。** `read_completion()` 核對 UTF-8、Run ID、結果內容、權限訊號、讀取前後修改時間及 `task.md ≤ result.md ≤ DONE ≤ deadline`。`await_result()` 用單調時鐘配合絕對期限等待檔案。`recover(task_id)` 先看既有收據和檔案，無法確認時保留 `SUBMISSION_UNKNOWN`，復原流程不呼叫 `worker.submit()`。舊版缺 Run ID 的未定案收據轉人工核對。已定案的 `TIMEOUT` 不會改為成功。[復原與驗收](../../handoff_sim.py#L143)
-- **人工 GUI 的歷史證據。** 正式規格 §2.1／§2.2 記載 Sol → Terra Low → Antigravity Gemini Flash → 檔案交接在兩台電腦曾成功，學校端使用固定工作區加相對路徑。V1 README 記載第二台通過離線測試的部署回報。本輪另以唯讀方式核對一份既有工作階段合成案例，`task.md`、`result.md` 首行及 `DONE` 的 Run ID 相符。三份檔案證實交接格式，無法單獨證實機器、實際模型、額度或送出回執。本輪未重跑 GUI，也沒有把人工流程當成 repo 中可執行的 Adapter。[人工操作規範](../../ROLES.md)、[正式規格 §2](MultiAgentHarness_V2_Final_Spec.md#2-現況基礎與事實驗證項目)
+- **人工 GUI 的歷史證據。** 正式規格 §2.1／§2.2 記載 Sol → Terra Low → Antigravity Gemini Flash → 檔案交接在兩台電腦曾成功，學校端使用固定工作區加相對路徑。V1 README 記載第二台通過離線測試的部署回報。本輪另以唯讀方式核對一份既有工作階段合成案例，`task.md`、`result.md` 首行及 `DONE` 的 Run ID 相符。三份檔案證實交接格式，無法單獨證實機器、實際模型、額度或送出回執。本輪未重跑 GUI，也沒有把人工流程當成 repo 中可執行的 Adapter。[人工操作規範](../ROLES.md)、[正式規格 §2](MultiAgentHarness_V2_Final_Spec.md#2-現況基礎與事實驗證項目)
 
 ## 4. V2 功能對照
 
@@ -131,7 +131,7 @@ python -B -m unittest discover -s . -p 'test_*.py' -v
 | V1 的預設 SQLite 路徑在 repo 的忽略目錄內，JSON 允許自訂工作區。 | §4.9、§11.1。V2 `state_dir`、`worktree_root` 須位於 repo 外並排除同步目錄。應保留 V1 JSON 及入口，另外接入 V2 TOML。V1 Doctor 要求 GUI 停用、人工監看及試行一次送出，不能直接改作 V2 額度執行器。 |
 | V1 期限涵蓋準備，且 `worker.submit()` 同步呼叫，輪詢逾時無法終止該呼叫。V1 `TIMEOUT` 一旦落盤就終結。 | §6.1、§6.4、§10。分清準備、啟動、執行與收集期限；為 V2 的 Adapter 定義可中止及可辨識的送出證據，獨立處理 `TIMED_OUT` 復原。 |
 | V1 僅用同任務條件更新防重複，復原按需查單筆，`DISPATCHING` 沒有所有者證據。 | §4.3、§4.4。V2 須交易式控制所有 run 的本機併發，並記錄程序、啟動時間或 GUI 回報。應避免把仍在執行的工作誤判為孤兒。 |
-| 正式規格與實作計畫已有 D-1 至 D-6 的介面處置。 | 後續按 [實作計畫 §3](MultiAgentHarness_V2_Implementation_Plan.md) 處理。另需釐清 D-6 所提 Trigger 與計畫 §0.2 只允許建表／加欄的遷移限制；未釐清前可把應用層交易檢查列為必要。 |
+| 正式規格與實作計畫已有 D-1 至 D-6 的介面處置。 | 後續按 [實作計畫 §3](../archive/MultiAgentHarness_V2_Implementation_Plan.md) 處理。另需釐清 D-6 所提 Trigger 與計畫 §0.2 只允許建表／加欄的遷移限制；未釐清前可把應用層交易檢查列為必要。 |
 | §10.4 的 `--not-submitted` 會取消並歸還筆數，§6.1 未畫出 `LAUNCHING → CANCELLED`。 | 需明訂可接受的未送出證據與對應轉移，避免把送出不明算為可歸還。§6.4 的無旗標復原與 Phase 3「只輸出證據」也須明確界定何時允許變更狀態。 |
 
 Phase 0B 的主要未決事實包括官方 `agy` 的 Windows 可用性、旗標、編碼、權限、輸出 schema 與訂閱扣量；`codex exec` 巢狀呼叫和 Windows 原生核准攔截；以及雙機 GUI 的可辨識模型／思考程度、實際送出回執、取消與額度證據。Spec §2.3 的 V-A、V-B、V-C、V-D 結果及路徑 A／B／C 均留待使用者確認後驗證。

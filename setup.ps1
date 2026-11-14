@@ -91,6 +91,9 @@ finally:
 try {
     # 任何本機設定、工作目錄或使用者套件寫入前，先驗證真正可用的 Python。
     $pythonPath = Get-HarnessPathPython
+    if ($script:HarnessStoreAliasFirst) {
+        Write-Output "[警告] PATH 上 Microsoft Store 的 python 替身排在真正的 Python（$pythonPath）前面，在終端機直接輸入 python 可能會開啟 Microsoft Store。請到「設定 → 應用程式 → 進階應用程式設定 → 應用程式執行別名」關閉 python.exe 和 python3.exe，再重開終端機。"
+    }
     # 路徑同樣在寫入前由 Python 解析；ZMAHARNESS_HOME 無效時在此停止。
     $paths = Get-HarnessPaths $pythonPath $PSScriptRoot
     $localRoot = Join-Path $PSScriptRoot '.local'
