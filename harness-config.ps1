@@ -102,6 +102,30 @@ function Get-HarnessPathPython {
     throw (Get-HarnessPythonFailureMessage -StoreAlias:$storeAlias)
 }
 
+function Get-HarnessPaths {
+    # 路徑解析只實作在 mah/config.py；此處只讀取其結果，不寫入檔案。
+    param([string]$PythonPath, [string]$EngineRoot)
+
+    # 不含雙引號，避免 Windows PowerShell 5.1 傳遞原生參數時破壞引號；輸出為 ASCII JSON。
+    $query = @'
+import json, sys
+try:
+    sys.path.insert(0, sys.argv[1])
+    from mah.config import path_report
+    report, code = path_report(), 0
+except Exception as exc:
+    report, code = {'error': str(exc)}, 2
+print(json.dumps(report, ensure_ascii=True))
+sys.exit(code)
+'@
+    $raw = & $PythonPath -I -B -c $query $EngineRoot
+    $exitCode = $LASTEXITCODE
+    try { $paths = ($raw -join "`n") | ConvertFrom-Json }
+    catch { throw '無法從 Python 取得 zMAHarness 路徑。' }
+    if ($exitCode -ne 0) { throw $paths.error }
+    return $paths
+}
+
 function Get-HarnessSkillFiles {
     param([string]$SourceRoot)
 

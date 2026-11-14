@@ -21,6 +21,11 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 `dispatch` 回傳 `30` 時先讀輸出的狀態及原因，只有 `COLLECTING` 且已有可核對的結果才交給主控 Agent 查核。
 其他非零結果停止後續命令並保留收據。
 
+兩段 PowerShell 腳本都會寫入 zMAHarness 帳本並啟動 Worker，必須在沙盒外執行。依主控平台的機制請求核准：
+Codex 請求沙盒外或提權執行；Claude Code 使用一般的權限確認。被拒絕時回報原因，由主控 Agent 自己繼續原任務。
+`dispatch` 回傳 `14` 且訊息說明派工必須在沙盒外執行時，這次沒有建立 Run，也沒有消耗 Grant。
+依主控平台的機制請求沙盒外執行後重試一次；被拒絕就回報原因，由主控 Agent 自己繼續原任務。不得自動重試第二次。
+
 1. 依卡片核准的模式及範圍準備資料。
    - **Context-Bundle 優先**。1～2 個核心檔案可完整封裝在 `max_task_bytes`（預設 32 KB）
      內時，用 `mah bundle create --repo <正式專案根目錄>` 指定完整的真實檔案。嚴禁為了

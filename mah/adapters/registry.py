@@ -33,13 +33,21 @@ def _agy_print_capture_check(directory, run, result_sha256):
     return capture_matches(directory, run, result_sha256)
 
 
+def _agy_print_executable(config):
+    from .agy_print import AgyPrintAdapter
+
+    return AgyPrintAdapter.from_config(None, config).find_executable()
+
+
 # factory(manager, config) -> an object implementing mah.adapters.base.Adapter
 ADAPTER_FACTORIES = {"agy-print": _agy_print_factory}
 # check(run_directory, run_summary, result_sha256) -> bool; optional receipt integrity capability.
 CAPTURE_CHECKS = {"agy-print": _agy_print_capture_check}
+# lookup(config) -> resolved path or None; optional read-only Worker executable check for preflight.
+EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable}
 
 
-def register(name, policy, *, factory=None, capture_check=None):
+def register(name, policy, *, factory=None, capture_check=None, executable_lookup=None):
     """Register an Adapter without editing core modules. Names must be new."""
     if name in ADAPTER_POLICIES:
         raise ValueError(f"Adapter is already registered: {name}")
@@ -50,10 +58,12 @@ def register(name, policy, *, factory=None, capture_check=None):
         ADAPTER_FACTORIES[name] = factory
     if capture_check is not None:
         CAPTURE_CHECKS[name] = capture_check
+    if executable_lookup is not None:
+        EXECUTABLE_LOOKUPS[name] = executable_lookup
 
 
 def unregister(name):
-    for table in (ADAPTER_POLICIES, ADAPTER_FACTORIES, CAPTURE_CHECKS):
+    for table in (ADAPTER_POLICIES, ADAPTER_FACTORIES, CAPTURE_CHECKS, EXECUTABLE_LOOKUPS):
         table.pop(name, None)
 
 
@@ -84,3 +94,7 @@ def create_adapter(name, manager, config):
 
 def capture_check(name):
     return CAPTURE_CHECKS.get(name)
+
+
+def executable_lookup(name):
+    return EXECUTABLE_LOOKUPS.get(name)

@@ -15,6 +15,7 @@ from subprocess import Popen
 from time import monotonic
 from uuid import UUID
 
+from ..config import user_local_appdata
 from ..context_bundle import _workspace_snapshot, _worktree_baseline, bundle_manifest
 from ..db import transaction
 from ..ledger import (AGY_OUTPUT_CONFLICT, PRE_SUBMIT_REASONS, READ_ONLY_TEMPLATES, TARGET_ID, TEMPLATE_TIMEOUTS,
@@ -365,9 +366,9 @@ class AgyPrintAdapter:
     def _executable(self):
         command = which(str(self.command)) if self.command else None
         if command is None and self.command == "agy" and os.name == "nt":
-            local_app_data = os.environ.get("LOCALAPPDATA")
-            if local_app_data and Path(local_app_data).is_absolute():
-                installed = Path(local_app_data) / "agy" / "bin" / "agy.exe"
+            local_app_data = user_local_appdata()
+            if local_app_data and local_app_data.is_absolute():
+                installed = local_app_data / "agy" / "bin" / "agy.exe"
                 if installed.is_file():
                     command = installed
         if not command:
@@ -376,6 +377,13 @@ class AgyPrintAdapter:
         if not executable.is_file() or (os.name == "nt" and executable.suffix.lower() != ".exe"):
             raise LedgerError(14, "agy must resolve to a native executable")
         return executable
+
+    def find_executable(self):
+        """Read-only lookup for preflight: the resolved executable, or None. Never runs it."""
+        try:
+            return self._executable()
+        except (LedgerError, OSError):
+            return None
 
     def probe(self, *, cwd=None):
         """Probe local binary capabilities without auth or inference."""

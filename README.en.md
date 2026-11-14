@@ -76,6 +76,14 @@ Both modes bind the approved scope and keep receipts. Even after verification su
 - **`agy` not found**: Doctor looks in PATH and in the standard install location `%LOCALAPPDATA%\agy\bin\agy.exe`. For a custom installation, set `agy_command` in the local TOML.
 - **PowerShell cannot run scripts**: Check the source of the scripts and the execution policy of the machine. If allowed, you can run `powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\setup.ps1` for a single process, and run Doctor the same way.
 
+### Using zMAHarness inside the Codex sandbox
+
+Codex's Windows workspace-write sandbox redirects `%LOCALAPPDATA%` to `...\Packages\<package name>\AC\...`, while `%USERPROFILE%` stays the same. zMAHarness recognizes this redirect automatically and reads its settings and ledger from `%USERPROFILE%\AppData\Local` instead; Doctor also shows which path source is in use.
+
+The sandbox only allows writes to the working folder, so dispatch must run outside the sandbox. When the pre-card `mah preflight` check detects the sandbox, the card's authorization limits note that dispatch needs one approval to run outside the sandbox, and Codex asks you to approve it once at dispatch time. If dispatch still runs inside the sandbox, `mah dispatch` stops with exit code 14 before creating a Run or consuming the Grant.
+
+You can also set the environment variable `ZMAHARNESS_HOME` to choose the zMAHarness folder (replacing `%LOCALAPPDATA%\zMAHarness`); it must be an absolute path. Once set, `setup.ps1`, Doctor and `mah` all use only that location and never fall back to the old `MultiAgentHarness` path.
+
 ### Optional lightweight controller settings
 
 ```toml

@@ -16,6 +16,16 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | T4 | 既有 Codex 額度快照達 `t4_codex_used_percent`，且有低成本驗收方法。缺快照時不用 T4 |
 | T5 | 使用者主動要求協作，或呼叫 `$zmaharness`（Codex）/`/zmaharness`（Claude Code） |
 
+## 出卡前檢查
+
+決定提議協作時，出卡前先執行一次唯讀檢查：
+
+`python -B -m mah preflight --repo <目標專案根目錄> --adapter <Adapter>`
+
+- 輸出 JSON 的 `ok` 為 `false`（結束碼 30）時不出卡。用一句話告訴使用者原因（取自 `reasons`），然後由主控 Agent 自己繼續原任務。
+- 雲端硬碟、網頁等不在本機 Git 專案裡的資料，不在協作範圍內，不出卡。
+- `needs_unsandboxed_dispatch` 為 `true` 時，在卡片的【授權限制】加一句「派工時需核准一次沙盒外執行」。
+
 ## 對話內提議
 
 卡片與回覆一律使用使用者提問的語言。`zMAHarness`、模型 ID 與指令名（`$zmaharness`、`/zmaharness`、`mah ...`）保留原文。
@@ -31,7 +41,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 - 【建議模型】顯示主控 Agent 依本次任務類型、觸發原因及難度選定的模型與 effort。
 - 【任務與範圍】顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
-- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。
+- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。出卡前檢查的 `needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
 - 【為什麼建議協作？】用一至兩句白話說明預期收益及選擇該模型的原因。
 
 依提問工具實際提供的欄位排版。下方選項範本定義各選項的意思，依工具能力分配到相應欄位。

@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'harness-config.ps1')
 
 function Install-ZMAHarness {
-    param([string]$PythonPath)
+    param([string]$PythonPath, [object]$Paths)
 
     if (-not $env:LOCALAPPDATA -or -not $env:USERPROFILE) {
         throw '需要 Windows 使用者的 LOCALAPPDATA 與 USERPROFILE。'
@@ -45,7 +45,7 @@ finally:
     & $PythonPath -B -c $register $PSScriptRoot
     if ($LASTEXITCODE -ne 0) { throw '無法註冊 Python 使用者的 zmaharness.pth。' }
 
-    $v2Root = Join-Path $env:LOCALAPPDATA 'zMAHarness'
+    $v2Root = $Paths.home
     $null = [IO.Directory]::CreateDirectory($v2Root)
     foreach ($name in @('state', 'worktrees', 'gui')) {
         $null = [IO.Directory]::CreateDirectory((Join-Path $v2Root $name))
@@ -60,8 +60,7 @@ finally:
         }
         finally { [IO.File]::Delete($temporary) }
     }
-    $legacyConfig = Join-Path $env:LOCALAPPDATA 'MultiAgentHarness/harness.local.toml'
-    if ([IO.File]::Exists($legacyConfig)) {
+    if ($Paths.legacy_config -and [IO.File]::Exists($Paths.legacy_config)) {
         Write-Output '[提示] 舊設定及資料保留。預設使用新設定，既有 Run 可用 --config 指向舊設定繼續處理。'
     }
 
@@ -92,6 +91,8 @@ finally:
 try {
     # 任何本機設定、工作目錄或使用者套件寫入前，先驗證真正可用的 Python。
     $pythonPath = Get-HarnessPathPython
+    # 路徑同樣在寫入前由 Python 解析；ZMAHARNESS_HOME 無效時在此停止。
+    $paths = Get-HarnessPaths $pythonPath $PSScriptRoot
     $localRoot = Join-Path $PSScriptRoot '.local'
     $localFile = Join-Path $localRoot 'settings.json'
     $template = Join-Path $PSScriptRoot 'config/local.example.json'
@@ -132,7 +133,7 @@ try {
     if ($created) { Write-Output "[通過] 已建立本機設定：$localFile" }
     else { Write-Output "[通過] 已保留本機設定：$localFile" }
     Write-Output "[通過] 工作目錄：$workspace"
-    Install-ZMAHarness -PythonPath $pythonPath
+    Install-ZMAHarness -PythonPath $pythonPath -Paths $paths
     Write-Output '下一步：執行 .\doctor.ps1。'
     exit 0
 }

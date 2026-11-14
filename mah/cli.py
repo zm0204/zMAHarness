@@ -10,10 +10,11 @@ import sys
 from uuid import uuid4
 
 from .adapters.registry import create_adapter, dispatchable_names, has_factory, policy_for
-from .config import _local_path, load_config
+from .config import DEFAULTS, _local_path, adapter_enabled, load_config
 from .context_bundle import bundle_manifest, check_bundle, prepare_bundle, prepare_worktree
 from .ledger import (BRAND_NAME, DISPATCH_SCOPE_FIELDS, READ_ONLY_TEMPLATES, SHA256, SUGGESTION_CARD_TITLE,
                      GrantLedger, LedgerError, TEMPLATE_TIMEOUTS, TEMPLATES, valid_id)
+from .preflight import preflight, require_unsandboxed_dispatch
 from .run_manager import RunManager
 from .verifier import VerificationEvidence, Verifier
 
@@ -40,6 +41,9 @@ def parser():
     worktree_create = worktree.add_parser("create", help="建立包含目前未提交內容的分離審查快照")
     worktree_create.add_argument("--repo", type=Path, required=True)
     worktree_create.add_argument("--run-id", required=True)
+    check = groups.add_parser("preflight", help="出卡前的唯讀可行性檢查")
+    check.add_argument("--repo", type=Path, required=True)
+    check.add_argument("--adapter", choices=dispatchable_names(), default=DEFAULTS["defaults"]["review"]["adapter"])
     card = groups.add_parser("card").add_subparsers(dest="action", required=True)
     create = card.add_parser("create")
     create.add_argument("--file", required=True, type=Path)
@@ -184,7 +188,7 @@ def approve(ledger, args):
 
 def dispatch_run(manager, config, args):
     adapters = config.values["adapters"]
-    if args.adapter not in adapters["enabled"]:
+    if not adapter_enabled(config, args.adapter):
         raise LedgerError(14, f"{args.adapter} 尚未在本機設定啟用")
     grant = manager.ledger.get_grant(args.grant)
     if grant is None:
@@ -273,6 +277,10 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8")
     args = parser().parse_args(argv)
     try:
+        if args.group == "preflight":
+            report = preflight(args.repo, args.adapter, args.config)
+            output(report)
+            return 0 if report["ok"] else 30
         config = load_config(args.config)
         for warning in config.warnings:
             print(f"警告：{warning}", file=sys.stderr)
@@ -290,6 +298,9 @@ def main(argv=None):
                                   max_bytes=max_bytes))
             return 0
         card_content = read_card(args.file, config) if args.group == "card" and args.action == "create" else None
+        if args.group == "dispatch":
+            # Before the ledger is opened, so no Run is created and no Grant is consumed.
+            require_unsandboxed_dispatch(config.database.parent)
         config.database.parent.mkdir(parents=True, exist_ok=True)
         ledger = GrantLedger(config.database, limits=config.ledger_limits)
         manager = RunManager(ledger, max_summary_chars=config.values["limits"]["max_result_summary_chars"])

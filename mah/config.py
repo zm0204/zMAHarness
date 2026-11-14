@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import tomllib
 
 from .adapters.registry import configurable_names
@@ -49,14 +50,67 @@ class Config:
                       self.values["approval"]["grant_ttl_minutes"], limits["max_effort"])
 
 
+# Codex's Windows workspace-write sandbox runs in an AppContainer that redirects LOCALAPPDATA to
+# ...\Packages\<package>\AC\<sandbox>; USERPROFILE and APPDATA are left unchanged.
+APPCONTAINER_REDIRECT = re.compile(r"\\Packages\\[^\\]+\\AC\\", re.IGNORECASE)
+CONFIG_NAME = "harness.local.toml"
+HOME_VARIABLE = "ZMAHARNESS_HOME"
+
+
+def sandbox_redirect_detected():
+    """Advisory: only the AppContainer LOCALAPPDATA redirect is recognized. Other sandboxes may
+    go undetected (false negatives), but an ordinary environment is never reported (no false positives)."""
+    return os.name == "nt" and APPCONTAINER_REDIRECT.search(os.environ.get("LOCALAPPDATA") or "") is not None
+
+
+def user_local_appdata():
+    """The user's real local application data folder, or None when the environment does not name one."""
+    if os.name != "nt":
+        return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    local = os.environ.get("LOCALAPPDATA")
+    profile = os.environ.get("USERPROFILE")
+    if local and profile and sandbox_redirect_detected():
+        return Path(profile) / "AppData" / "Local"
+    return Path(local) if local else None
+
+
+def zmaharness_home():
+    """Return (root, source); source is ZMAHARNESS_HOME, sandbox_redirect or default."""
+    value = os.environ.get(HOME_VARIABLE)
+    if value is not None:
+        if not value.strip() or value != value.strip() or not Path(value).is_absolute():
+            raise ConfigError(f"{HOME_VARIABLE} 必須是絕對路徑，目前為「{value}」")
+        return Path(value), HOME_VARIABLE
+    base = user_local_appdata() or Path.home() / "AppData" / "Local"
+    source = "sandbox_redirect" if os.environ.get("USERPROFILE") and sandbox_redirect_detected() else "default"
+    return base / BRAND_NAME, source
+
+
 def default_config_path():
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    else:
-        base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-    current = base / BRAND_NAME / "harness.local.toml"
-    legacy = base / "MultiAgentHarness" / "harness.local.toml"
+    home, source = zmaharness_home()
+    current = home / CONFIG_NAME
+    if source == HOME_VARIABLE:
+        # An explicit location never falls back to the legacy folder, so a wrong setting stays visible.
+        return current
+    legacy = home.parent / "MultiAgentHarness" / CONFIG_NAME
     return legacy if not current.exists() and legacy.is_file() else current
+
+
+def path_report():
+    """Read-only path summary shared by setup.ps1 and doctor.ps1."""
+    home, source = zmaharness_home()
+    local = user_local_appdata()
+    return {
+        "home": str(home), "source": source, "config_path": str(home / CONFIG_NAME),
+        "legacy_config": None if source == HOME_VARIABLE else str(home.parent / "MultiAgentHarness" / CONFIG_NAME),
+        "local_appdata": str(local) if local is not None else None,
+        "sandbox_redirect_detected": sandbox_redirect_detected(),
+    }
+
+
+def adapter_enabled(config, name):
+    """The local-settings check shared by dispatch and preflight."""
+    return name in config.values["adapters"]["enabled"]
 
 
 def _merge(defaults, supplied, prefix=""):

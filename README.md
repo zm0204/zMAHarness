@@ -76,6 +76,14 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 - **找不到 `agy`**：Doctor 會找 PATH 或標準安裝位置 `%LOCALAPPDATA%\agy\bin\agy.exe`。自訂安裝可在本機 TOML 指定 `agy_command`。
 - **PowerShell 無法執行腳本**：確認來源與所在機器的執行原則。若允許，可對單次程序執行 `powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\setup.ps1`，並以同樣方式執行 Doctor。
 
+### 在 Codex 沙盒中使用
+
+Codex 在 Windows 的 workspace-write 沙盒會把 `%LOCALAPPDATA%` 重新導向到 `...\Packages\<套件名稱>\AC\...`，但 `%USERPROFILE%` 不變。zMAHarness 會自動辨識這種重新導向，改從 `%USERPROFILE%\AppData\Local` 讀取設定與帳本，Doctor 也會顯示目前使用的路徑來源。
+
+沙盒只允許寫入工作資料夾，因此派工必須在沙盒外執行。出卡前的 `mah preflight` 偵測到沙盒時，卡片的授權限制會註明「派工時需核准一次沙盒外執行」，派工時 Codex 會請你核准一次。若仍在沙盒內派工，`mah dispatch` 會在建立 Run、消耗 Grant 之前以結束碼 14 停止。
+
+也可以設定環境變數 `ZMAHARNESS_HOME` 指定 zMAHarness 的資料夾（取代 `%LOCALAPPDATA%\zMAHarness`），必須是絕對路徑。設定後 `setup.ps1`、Doctor 與 `mah` 都只使用該位置，不會退回舊的 `MultiAgentHarness` 路徑。
+
 ### 選填的輕量主控設定
 
 ```toml

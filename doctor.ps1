@@ -121,6 +121,27 @@ else {
 if ($python) { Report-Check '通過' 'Python 及 SQLite' "$python（$pythonCommand）" }
 else { Report-Check '失敗' 'Python 及 SQLite' (Get-HarnessPythonFailureMessage -StoreAlias:$storeAlias) }
 
+# 路徑只由 mah/config.py 解析；沒有可用的 Python 時沿用原本的 LOCALAPPDATA。
+$paths = $null
+$pathsFailed = $false
+$localAppData = $env:LOCALAPPDATA
+if ($python) {
+    try {
+        $paths = Get-HarnessPaths (Get-HarnessPathPython) $PSScriptRoot
+        $localAppData = $paths.local_appdata
+        $source = switch ($paths.source) {
+            'ZMAHARNESS_HOME' { '由 ZMAHARNESS_HOME 指定' }
+            'sandbox_redirect' { '偵測到沙盒重新導向，改用 USERPROFILE\AppData\Local' }
+            default { '預設位置' }
+        }
+        Report-Check '通過' 'zMAHarness 路徑' "${source}：$($paths.home)"
+    }
+    catch {
+        $pathsFailed = $true
+        Report-Check '失敗' 'zMAHarness 路徑' $_.Exception.Message
+    }
+}
+
 if ($local) {
     $probeFile = $null
     $created = $false
@@ -156,7 +177,7 @@ if (Get-Command Get-StartApps -ErrorAction SilentlyContinue) {
     try { $startApps = @(Get-StartApps) } catch { }
 }
 $antigravityPaths = @()
-if ($env:LOCALAPPDATA) { $antigravityPaths += Join-Path $env:LOCALAPPDATA 'Programs/antigravity/Antigravity.exe' }
+if ($localAppData) { $antigravityPaths += Join-Path $localAppData 'Programs/antigravity/Antigravity.exe' }
 if ($env:ProgramFiles) { $antigravityPaths += Join-Path $env:ProgramFiles 'Antigravity/Antigravity.exe' }
 Find-App 'Codex' $local.codexExecutable @() $startApps
 Find-App 'Antigravity' $local.antigravityExecutable $antigravityPaths $startApps
@@ -167,11 +188,12 @@ Report-Check '需人工驗證' 'GUI 與平台規範' '確認允許的操作方�
 Write-Output '--- zMAHarness V2 環境 ---'
 $v2Settings = $null
 $v2Config = $null
-if ($env:LOCALAPPDATA) { $v2Config = Join-Path $env:LOCALAPPDATA 'zMAHarness/harness.local.toml' }
+if ($paths) { $v2Config = $paths.config_path }
 $hasV2Config = $v2Config -and [IO.File]::Exists($v2Config)
 if (-not $hasV2Config) {
-    $detail = if ($python) { '找不到 %LOCALAPPDATA%\zMAHarness\harness.local.toml。請執行 setup.ps1。' }
-              else { '請先解決上方的 Python 問題。' }
+    $detail = if (-not $python) { '請先解決上方的 Python 問題。' }
+              elseif ($pathsFailed) { '請先解決上方的 zMAHarness 路徑問題。' }
+              else { "找不到 $v2Config。請執行 setup.ps1。" }
     Report-Check '失敗' 'zMAHarness TOML' $detail
 }
 
@@ -226,8 +248,8 @@ try {
     else {
         $agyExe = if ($agyName.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $agyName } else { "$agyName.exe" }
         $agyPath = (Get-Command $agyExe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-        if (-not $agyPath -and $agyName -ceq 'agy' -and $env:LOCALAPPDATA) {
-            $candidate = Join-Path $env:LOCALAPPDATA 'agy/bin/agy.exe'
+        if (-not $agyPath -and $agyName -ceq 'agy' -and $localAppData) {
+            $candidate = Join-Path $localAppData 'agy/bin/agy.exe'
             if ([IO.File]::Exists($candidate)) { $agyPath = $candidate }
         }
     }

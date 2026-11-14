@@ -55,6 +55,8 @@
 !/mah/adapters/agy_print.py
 !/mah/adapters/base.py
 !/mah/adapters/registry.py
+!/mah/preflight.py
+!/tests/v2/test_preflight.py
 !/tests/v2/test_adapter_registry.py
 !/docs/ADAPTERS.md
 !/tests/v2/test_agy_print.py
