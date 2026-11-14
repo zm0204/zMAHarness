@@ -32,18 +32,22 @@ class SetupPreflightTests(unittest.TestCase):
             environment["LOCALAPPDATA"] = str(root / "appdata")
             environment["USERPROFILE"] = str(root / "profile")
             powershell = windows / "System32/WindowsPowerShell/v1.0/powershell.exe"
-            command = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); & '" + str(checkout / script).replace("'", "''") + "'"
+            output_file = root / "output.txt"
+            source = str(checkout / script).replace("'", "''")
+            output = str(output_file).replace("'", "''")
+            invoke = "& '" + source + "' *>&1 | Out-File -LiteralPath '" + output + "' -Encoding UTF8"
             result = subprocess.run(
-                [str(powershell), "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-Command", command],
+                [str(powershell), "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-Command", invoke],
                 cwd=checkout, env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             )
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertFalse((checkout / ".local").exists(), result.stdout + result.stderr)
+            message = output_file.read_text(encoding="utf-8-sig") if output_file.exists() else result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, message)
+            self.assertFalse((checkout / ".local").exists(), message)
             self.assertFalse((root / "appdata" / "zMAHarness").exists())
             self.assertFalse((root / "profile" / ".agents").exists())
             self.assertFalse((root / "profile" / ".claude").exists())
-            self.assertIn("winget install -e --id Python.Python.3.13", result.stdout)
-            return result.stdout
+            self.assertIn("winget install -e --id Python.Python.3.13", message)
+            return message
 
     def test_missing_python_stops_before_creating_local_config(self):
         self.run_without_python()
