@@ -13,6 +13,8 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 - **Worker**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。
 - **本機工具**　Git、PowerShell 5.1 或 7、Python 3.11 以上。請將要使用的 `python.exe` 加入 PATH，並啟用 Python 使用者套件目錄。
 
+可在一般 PowerShell 終端機執行 `winget install -e --id Python.Python.3.13`，或從 python.org 安裝並勾選 **Add python.exe to PATH**。如果 `python.exe` 指向 `Microsoft\WindowsApps` 且無法執行，那是 Microsoft Store 的假捷徑，不是真的 Python；請到「設定 → 應用程式 → 進階應用程式設定 → 應用程式執行別名」關閉 `python.exe` 和 `python3.exe`，重開終端機後再執行安裝。
+
 ## Worker 驗收狀態
 
 | Worker | 驗收範圍 |
@@ -25,6 +27,8 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 Skill 所列模型 ID 以 2026 年 11 月的 `agy models` 為準，日後可能隨 CLI 或帳號可用模型變動。
 
 ## 三步快速開始
+
+請在一般的 PowerShell 終端機執行 `setup.ps1`，不要透過 AI Agent 的受限沙盒執行；安裝需要寫入目前使用者的 Python 套件目錄與技能目錄。
 
 ```powershell
 # 1. 下載並進入專案
@@ -98,6 +102,8 @@ suggested_controller = "Codex Sol High"
 python -B -m unittest -q
 python -B -m unittest discover -s tests/v2 -q
 ```
+
+若 Windows 未開啟開發人員模式，且一般使用者沒有建立符號連結的權限，相關測試會顯示為略過，屬於正常現象；有權限的環境仍會執行完整斷言。
 
 V1 的檔案交接與中斷復原規則見 [角色規範](ROLES.md) 和 [V1 盤點](docs/v2/V1_INVENTORY.md)。請讓本機設定、SQLite、任務紀錄及私人驗證報告留在本機。Git 白名單只納入專案程式、通用文件與已去識別化的測試資料。
 

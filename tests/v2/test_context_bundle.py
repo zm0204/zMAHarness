@@ -360,8 +360,12 @@ class ContextBundleTests(unittest.TestCase):
         self.allow(alias.name)
         try:
             alias.symlink_to(self.instructions)
-        except PermissionError:
-            self.skipTest("This test process cannot create symlinks")
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Creating symlinks requires Windows Developer Mode or administrator privileges")
+            if isinstance(exc, PermissionError):
+                self.skipTest("This test process cannot create symlinks")
+            raise
         self.assertNotEqual(self.create(alias.name).returncode, 0)
         self.assertFalse(self.bundle.exists())
 

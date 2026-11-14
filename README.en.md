@@ -13,6 +13,8 @@ zMAHarness follows a **Single-Agent First** workflow. The controller agent (Code
 - **Worker**　Install the Antigravity CLI (`agy`) from the [official Google documentation](https://antigravity.google/docs/install?tab=cli) and sign in with a personal Google AI Pro subscription.
 - **Local tools**　Git, PowerShell 5.1 or 7, Python 3.11 or later. Add the `python.exe` you intend to use to PATH, and enable the Python user site-packages directory.
 
+In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13`, or install from python.org and select **Add python.exe to PATH**. If `python.exe` points into `Microsoft\WindowsApps` and cannot run, it is a Microsoft Store placeholder, not a working Python installation. Disable the `python.exe` and `python3.exe` aliases under Settings → Apps → Advanced app settings → App execution aliases, then reopen the terminal before installing.
+
 ## Worker acceptance status
 
 | Worker | Acceptance scope |
@@ -25,6 +27,8 @@ zMAHarness follows a **Single-Agent First** workflow. The controller agent (Code
 The model IDs listed in the Skill follow `agy models` as of November 2026 and may change with the CLI or with the models available to your account.
 
 ## Quick start in three steps
+
+Run `setup.ps1` in a regular PowerShell terminal, not in an AI agent's restricted sandbox. Setup writes to the current user's Python site-packages and Skill directories.
 
 ```powershell
 # 1. Clone and enter the project
@@ -98,6 +102,8 @@ Run the following commands from the root of the zMAHarness clone. The tests use 
 python -B -m unittest -q
 python -B -m unittest discover -s tests/v2 -q
 ```
+
+On Windows without Developer Mode, symlink-related tests normally show as skipped if the user cannot create symlinks. Environments with that permission still run the full assertions.
 
 For V1 file handoff and interruption recovery rules, see the [role rules](ROLES.md) and the [V1 inventory](docs/v2/V1_INVENTORY.md). Keep local settings, SQLite, task records, and private verification reports on your machine. The Git whitelist only includes project code, general documentation, and de-identified test data.
 

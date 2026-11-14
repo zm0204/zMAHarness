@@ -45,12 +45,61 @@ function Resolve-HarnessPath {
     return [IO.Path]::GetFullPath((Join-Path $Root $Path))
 }
 
-function Get-HarnessPathPython {
-    $command = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $command -or $command.Source -like '*\Microsoft\WindowsApps\*') {
-        throw '請將可直接執行的 Python 3.11 以上版本加入 PATH，並重新開啟終端。'
+function Get-HarnessPythonProbe {
+    param([string]$Path, [switch]$Launcher)
+
+    # 隔離探針只使用記憶體資料庫，不執行專案程式或寫入檔案。
+    $probe = 'import sys, sqlite3; db = sqlite3.connect('':memory:''); db.execute(''SELECT 1'').fetchone(); print(''Python '' + sys.version.split()[0] + '' / SQLite '' + sqlite3.sqlite_version); sys.exit(0 if sys.version_info >= (3, 11) else 2)'
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $Path
+    $start.Arguments = '-I -B -S -c "' + $probe + '"'
+    if ($Launcher) { $start.Arguments = '-3 ' + $start.Arguments }
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $start
+    try {
+        $null = $process.Start()
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(5000)) {
+            $process.Kill()
+            return $null
+        }
+        if ($process.ExitCode -eq 0) { return $output.GetAwaiter().GetResult().Trim() }
+        return $null
     }
-    return $command.Source
+    catch { return $null }
+    finally { $process.Dispose() }
+}
+
+function Get-HarnessPythonFailureMessage {
+    param([switch]$StoreAlias)
+
+    $reason = if ($StoreAlias) {
+        '這是 Microsoft Store 的假捷徑，不是真的 Python。'
+    }
+    else {
+        '找不到可執行、版本 3.11 以上且可匯入 sqlite3 的 Python。'
+    }
+    return @(
+        $reason
+        '執行 winget install -e --id Python.Python.3.13，或從 python.org 安裝並勾選 Add python.exe to PATH。'
+        '到「設定 → 應用程式 → 進階應用程式設定 → 應用程式執行別名」關閉 python.exe 和 python3.exe。'
+        '重開終端機後再執行 setup.ps1。'
+    ) -join [Environment]::NewLine
+}
+
+function Get-HarnessPathPython {
+    $storeAlias = $false
+    foreach ($command in @(Get-Command python.exe -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        $result = Get-HarnessPythonProbe $command.Source
+        if ($result) { return $command.Source }
+        if ($command.Source -like '*\Microsoft\WindowsApps\*') { $storeAlias = $true }
+    }
+    throw (Get-HarnessPythonFailureMessage -StoreAlias:$storeAlias)
 }
 
 function Get-HarnessSkillFiles {

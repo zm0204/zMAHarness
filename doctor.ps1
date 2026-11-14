@@ -11,40 +11,6 @@ function Report-Check {
     Write-Output "[$Status] ${Name}：$Detail"
 }
 
-function Test-Python {
-    param([string]$Path, [switch]$Launcher)
-
-    if ($Path -like '*\Microsoft\WindowsApps\*') { return $null }
-
-    # 固定、隔離的 Python 探針。使用記憶體資料庫，不讀任務或執行專案程式。
-    $probe = 'import sys, sqlite3; db = sqlite3.connect('':memory:''); db.execute(''SELECT 1'').fetchone(); print(''Python '' + sys.version.split()[0] + '' / SQLite '' + sqlite3.sqlite_version); sys.exit(0 if sys.version_info >= (3, 11) else 2)'
-    $start = New-Object System.Diagnostics.ProcessStartInfo
-    $start.FileName = $Path
-    $start.Arguments = '-I -B -S -c "' + $probe + '"'
-    if ($Launcher) { $start.Arguments = '-3 ' + $start.Arguments }
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $start
-    try {
-        $null = $process.Start()
-        $output = $process.StandardOutput.ReadToEndAsync()
-        $errors = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(5000)) {
-            $process.Kill()
-            return $null
-        }
-        if ($process.ExitCode -eq 0) {
-            return $output.GetAwaiter().GetResult().Trim()
-        }
-        return $null
-    }
-    catch { return $null }
-    finally { $process.Dispose() }
-}
-
 function Find-App {
     param([string]$Name, [string]$ConfiguredPath, [string[]]$KnownPaths, [object[]]$StartApps)
 
@@ -122,12 +88,14 @@ catch { Report-Check '失敗' '本機設定' "請執行 setup.ps1 並檢查本�
 
 $python = $null
 $pythonCommand = $null
+$storeAlias = $false
 if ($local.pythonExecutable) {
     try {
         $candidate = Resolve-HarnessPath $PSScriptRoot $local.pythonExecutable
         if ([IO.Path]::GetExtension($candidate) -ieq '.exe' -and [IO.File]::Exists($candidate)) {
-            $python = Test-Python $candidate
+            $python = Get-HarnessPythonProbe $candidate
             $pythonCommand = $candidate
+            if (-not $python -and $candidate -like '*\Microsoft\WindowsApps\*') { $storeAlias = $true }
         }
     }
     catch { Report-Check '失敗' 'Python 路徑' $_.Exception.Message }
@@ -135,22 +103,23 @@ if ($local.pythonExecutable) {
 else {
     $candidates = @(Get-Command python.exe -All -CommandType Application -ErrorAction SilentlyContinue)
     foreach ($command in $candidates) {
-        $python = Test-Python $command.Source
+        $python = Get-HarnessPythonProbe $command.Source
         if ($python) {
             $pythonCommand = $command.Source
             break
         }
+        if ($command.Source -like '*\Microsoft\WindowsApps\*') { $storeAlias = $true }
     }
     if (-not $python) {
         $launcher = Get-Command py.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($launcher) {
-            $python = Test-Python $launcher.Source -Launcher
+            $python = Get-HarnessPythonProbe $launcher.Source -Launcher
             $pythonCommand = "$($launcher.Source) -3"
         }
     }
 }
 if ($python) { Report-Check '通過' 'Python 及 SQLite' "$python（$pythonCommand）" }
-else { Report-Check '失敗' 'Python 及 SQLite' '未能執行 Python 3.11 以上及 SQLite 探針。請檢查 PATH 或 pythonExecutable。' }
+else { Report-Check '失敗' 'Python 及 SQLite' (Get-HarnessPythonFailureMessage -StoreAlias:$storeAlias) }
 
 if ($local) {
     $probeFile = $null
@@ -201,12 +170,15 @@ $v2Config = $null
 if ($env:LOCALAPPDATA) { $v2Config = Join-Path $env:LOCALAPPDATA 'zMAHarness/harness.local.toml' }
 $hasV2Config = $v2Config -and [IO.File]::Exists($v2Config)
 if (-not $hasV2Config) {
-    Report-Check '失敗' 'zMAHarness TOML' '找不到 %LOCALAPPDATA%\zMAHarness\harness.local.toml。請執行 setup.ps1。'
+    $detail = if ($python) { '找不到 %LOCALAPPDATA%\zMAHarness\harness.local.toml。請執行 setup.ps1。' }
+              else { '請先解決上方的 Python 問題。' }
+    Report-Check '失敗' 'zMAHarness TOML' $detail
 }
 
 $savedPythonPath = $env:PYTHONPATH
 $locationPushed = $false
 try {
+    if (-not $python) { throw '請先解決上方的 Python 問題。' }
     $pathPython = Get-HarnessPathPython
     if (-not $env:LOCALAPPDATA) { throw '缺少 LOCALAPPDATA，無法從引擎以外的目錄測試。' }
     Push-Location -LiteralPath $env:LOCALAPPDATA
@@ -233,7 +205,11 @@ try {
 }
 catch {
     Report-Check '失敗' 'zMAHarness 跨專案 CLI' $_.Exception.Message
-    if ($hasV2Config) { Report-Check '需人工驗證' 'zMAHarness TOML' '設定檔存在，修復 Python 安裝後再檢查內容。' }
+    if ($hasV2Config) {
+        $detail = if ($python) { '設定檔存在，請檢查 Python 安裝後再檢查內容。' }
+                  else { '請先解決上方的 Python 問題。' }
+        Report-Check '需人工驗證' 'zMAHarness TOML' $detail
+    }
 }
 finally {
     $env:PYTHONPATH = $savedPythonPath
@@ -278,7 +254,10 @@ foreach ($name in $skillTargets.Keys) {
         }
         Report-Check '通過' $name $skillRoot
     }
-    catch { Report-Check '失敗' $name $_.Exception.Message }
+    catch {
+        $detail = if ($python) { $_.Exception.Message } else { '請先解決上方的 Python 問題。' }
+        Report-Check '失敗' $name $detail
+    }
 }
 
 if ($env:USERPROFILE) {

@@ -19,3 +19,6 @@ jobs:
         run: python -B -m unittest -q
       - name: V2 offline tests
         run: python -B -m unittest discover -s tests/v2 -q
+      - name: Symlink regression runs on CI
+        run: |
+          python -B -c "import sys, unittest; sys.path.insert(0, 'tests/v2'); suite = unittest.defaultTestLoader.loadTestsFromName('test_context_bundle.ContextBundleTests.test_symlink_to_outside_file_is_blocked'); result = unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful() or bool(result.skipped))"
