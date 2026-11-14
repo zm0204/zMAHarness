@@ -111,7 +111,7 @@ Codex 只能透過 shell 或 code mode 工具讀檔，而 `-s read-only` 的讀�
 
 ## 8. 後續
 
-- **agy 搬到共用基底。** `cli_worker.py` 是從 `AgyPrintAdapter` 移植並參數化的；為了不影響已通過真實驗收的 agy，這一階段沒有改 `agy_print.py`，所以兩者暫時有一份刻意保留的重複。等 `codex-exec` 也用同一個基底並通過真實驗收後，另開一個純重構階段，把 agy 搬到基底上，以 agy 現有的測試當護欄。
+- **agy 搬到共用基底。** `cli_worker.py` 是從 `AgyPrintAdapter` 移植並參數化的；為了不影響已通過真實驗收的 agy，這一階段沒有改 `agy_print.py`，所以兩者暫時有一份刻意保留的重複。`claude-print` 與 `codex-exec` 都已使用同一個基底並通過真實驗收，之後另開一個純重構階段，把 agy 搬到基底上，以 agy 現有的測試當護欄。
 - **退款證據通用化。** 屆時把帳本退款判斷裡 agy 專屬的 `agy_capture_sha256` 通用化成 `capture_sha256`（基底已使用這個名稱），`claude-print` 就可以開啟 `refunds_unstarted_process`，讓確定沒啟動的程序退回 Grant。
 - **帳本欄位與暫存檔。** CLI Worker 的帳本 `runs.model_observed`、`runs.cli_version` 目前為 null（實際值記在收據的 `observation` 與 `cli_version`），Run 目錄也會留下 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`。這兩項延到「agy 搬上共用基底」的重構階段一起處理。
 

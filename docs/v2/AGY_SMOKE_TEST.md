@@ -1,3 +1,5 @@
+> 這是早期設計文件，現況以 [README](../../README.md) 與 [docs/ADAPTERS.md](../ADAPTERS.md) 為準。
+
 # agy-print 單筆 Gemini Smoke Test
 
 ## 方案 D Context-Bundle（待使用者核准）

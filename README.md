@@ -10,7 +10,7 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 
 - **作業系統**　Windows 11。
 - **主控**　[Codex Desktop](https://openai.com/codex/) 或 [Claude Code](https://code.claude.com/docs/) 二選一。
-- **Worker**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。
+- **Gemini Worker（預設）**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。
 - **Claude Worker（選用）**　以 `npm install -g @anthropic-ai/claude-code` 安裝 Claude Code CLI，再執行 `claude auth login`（或執行 `claude` 依畫面）以 Claude 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `ANTHROPIC_` 開頭的變數），出卡前也會以 `claude auth status` 確認 CLI 是以 Claude 訂閱帳號登入；未登入、登入已到期，或使用 API 金鑰、`apiKeyHelper`、第三方供應商時都不出卡。在這兩項檢查下，Worker 會使用你的 Claude 訂閱，跟你平常使用 Claude 共用同一份用量上限；實際計費仍以 Anthropic 的帳號設定為準。你自己在終端機執行 `claude` 時不受這些檢查保護。殘餘風險：使用者層級的 `~/.claude/CLAUDE.md` 與 `~/.claude/settings.json` 裡的 hooks 等使用者設定仍會載入 Worker，無法以參數關閉；請保持這些設定不含會寫檔、連網或改變指示的內容。zMAHarness 只啟動套件內的原生 `claude.exe`，不經由 npm 的 `claude.cmd` 轉呼。
 - **GPT Worker（選用）**　以 `npm install -g @openai/codex` 安裝 Codex CLI，再執行 `codex login` 以 ChatGPT 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `OPENAI_` 開頭的變數，以及 `CODEX_HOME` 以外的 `CODEX_` 變數），出卡前也會以 `codex login status` 確認 CLI 是以 ChatGPT 帳號登入；未登入或以 API 金鑰登入時都不出卡。在這兩項檢查下，Worker 會使用你的 ChatGPT 訂閱，跟你平常使用 Codex 共用同一份用量上限；實際計費仍以 OpenAI 的帳號設定為準。執行期間只要 Worker 的輸出出現任何工具呼叫，該次結果一律判為不可驗收。`codex-exec` 目前**只支援 Context-Bundle**，並停用 Codex 的所有工具。殘餘風險：Codex 會把你的全域 `AGENTS.md` 注入 Worker，無法以設定關閉；工具全關時影響僅限回答內容，輸出仍受 schema 與 Verifier 約束，Doctor 會提示。zMAHarness 只啟動套件內的原生 `codex.exe`，不經由 npm 的 `codex.cmd` 轉呼。
 - **本機工具**　Git、PowerShell 5.1 或 7、Python 3.11 以上。請將要使用的 `python.exe` 加入 PATH，並啟用 Python 使用者套件目錄。
@@ -24,10 +24,23 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 | Gemini | **真實派工**：T5 觸發 BatchTable 跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板及 Disposable Worktree 的真實端到端流程尚未驗收。 |
 | Claude | Sonnet、Opus 已列為 `agy-print` 的候選模型，真實 Worker 派工尚未驗收。 |
 | Claude（`claude-print`） | **真實派工已驗收**：BatchTable，`sonnet · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。 |
-| GPT（`codex-exec`） | 離線測試通過，真實派工尚未驗收。只支援 Context-Bundle。 |
+| GPT（`codex-exec`） | **真實派工已驗收**：BatchTable，主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。只支援 Context-Bundle。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |
 
 Skill 所列模型 ID 以 2026 年 11 月的 `agy models` 為準，日後可能隨 CLI 或帳號可用模型變動。
+
+## 名詞
+
+| 名詞 | 意思 |
+| --- | --- |
+| 主控 | 你平常對話的 AI Agent（Codex Desktop 或 Claude Code）。它負責原任務、提出協作建議，並驗收 Worker 的結果。 |
+| Worker | 被派工的另一個模型，經由本機 CLI（`agy`、`claude`、`codex`）執行，只做唯讀分析。 |
+| Adapter | zMAHarness 啟動某一種 Worker CLI 的模組：`agy-print`（Gemini）、`claude-print`（Claude）、`codex-exec`（GPT）。 |
+| 卡片 | 主控在對話中顯示的協作建議，列出模型、任務與範圍，等你同意。 |
+| Grant | 你同意一張卡片後產生的授權紀錄，綁定範圍與派工次數。 |
+| Run | 一次派工。每個 Run 有自己的 Run ID、收據與結果。 |
+| 帳本（Ledger） | 本機 SQLite 資料庫，記錄卡片、Grant、Run 與驗收狀態。 |
+| T1～T5 | 主控提出協作建議的五種觸發條件：T1 同一錯誤多次修正仍失敗；T2 變更觸及高風險路徑且差異行數多；T3 需要大量閱讀但產出很小；T4 主控額度使用率偏高；T5 你主動要求協作。門檻在本機 TOML 的 `[triggers]`。 |
 
 ## 三步快速開始
 
@@ -45,12 +58,14 @@ Set-Location zMAHarness
 .\doctor.ps1
 ```
 
-初始化沿用 V1 的 `.local/settings.json` 與工作目錄，並建立 V2 本機設定。它會將引擎路徑以 ASCII 跳脫格式註冊到目前 Python 的使用者套件目錄 `zmaharness.pth`，可支援中文 clone 路徑。完整 Skill（含 `references/`）會同步安裝到以下兩處。
+初始化會在 clone 目錄內建立 `.local/settings.json` 與工作目錄（V1 檔案交接流程使用，已存在時沿用，不會進入 Git），並建立本機設定 `%LOCALAPPDATA%\zMAHarness\harness.local.toml`。它會將引擎路徑以 ASCII 跳脫格式註冊到目前 Python 的使用者套件目錄 `zmaharness.pth`，可支援中文 clone 路徑。完整 Skill（含 `references/`）會同步安裝到以下兩處。
 
 - `%USERPROFILE%\.agents\skills\zmaharness\`
 - `%USERPROFILE%\.claude\skills\zmaharness\`
 
 重跑會保留現有 TOML 和 V1 本機設定，並更新引擎註冊及兩處 Skill。安裝只需要一般使用者權限，Python 端只用標準函式庫。Doctor 可離線檢查 CLI 匯入、`agy.exe` 的安裝線索、本機 TOML 與兩處 Skill 的一致性。實際登入、模型可用性及主控介面的 Skill 載入需在使用時確認。
+
+Doctor 的每一行以 `[通過]`、`[警告]`、`[需人工驗證]` 或 `[失敗]` 開頭。只有 `[失敗]` 會讓結束碼變成 1；`[需人工驗證]` 是 Doctor 無法離線確認的項目（例如登入狀態），不代表安裝有問題。沒有安裝的選用 Worker 會顯示為 `[需人工驗證]`，不使用該 Worker 時可以忽略。
 
 舊安裝的本機 TOML 會保留原本的 `adapters.enabled`，不會自動加入新的 Worker。要使用 Claude Worker，請手動把 `"claude-print"` 加進 `adapters.enabled`；Doctor 找到 claude 執行檔但尚未啟用時會提示寫法。
 
@@ -83,7 +98,8 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 ## 本機設定與故障排除
 
 - **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits，略過派工前後的額度查詢。
-- **舊資料清理**：`privacy.retain_run_dirs_days` 目前尚未實作，不會自動清理。請定期手動刪除設定資料夾內 `stateuns` 與 `worktrees` 底下不再需要的舊資料；Disposable Worktree 請在目標專案以 `git worktree remove <路徑>` 刪除；若已直接刪掉資料夾，再執行 `git worktree prune`。
+- **舊資料清理**：`privacy.retain_run_dirs_days` 目前尚未實作，不會自動清理。請定期手動刪除設定資料夾內 `state\runs` 與 `worktrees` 底下不再需要的舊資料；Disposable Worktree 請在目標專案以 `git worktree remove <路徑>` 刪除；若已直接刪掉資料夾，再執行 `git worktree prune`。
+- **移除 zMAHarness**：刪除 Python 使用者套件目錄中的 `zmaharness.pth`（位置可用 `python -m site --user-site` 查詢）、上述兩處 `zmaharness` Skill 目錄，以及 `%LOCALAPPDATA%\zMAHarness`，最後刪除 clone 目錄。
 - **Worker 執行檔**：zMAHarness 只從 PATH 中的絕對路徑尋找 `claude`、`codex`、`agy`，不使用目前目錄或相對路徑下的同名檔案；解析結果位於目標專案、工作樹或 Bundle 目錄內時一律拒絕（結束碼 14）。
 - **既有安裝**：新設定尚未建立時，`mah` 會退回舊的 `%LOCALAPPDATA%\MultiAgentHarness\harness.local.toml`（若存在）。執行新版初始化後會優先使用新設定。舊 Ledger 與 Run 保留在原處，查詢或收尾舊 Run 時在子命令前指定 `--config <舊設定檔>`。
 - **其他專案找不到 `mah`**：確認該終端與安裝時使用相同的 Python，並啟用 Python 使用者套件目錄。移動 clone 或更換 Python 後請重跑安裝。也可暫時將引擎根目錄加入 `PYTHONPATH`。
@@ -113,7 +129,7 @@ suggested_controller = "Codex Sol High"
 
 以下項目**規劃中，尚未實作**。
 
-1) OpenAI 相容 API Worker（DeepSeek、Ollama 等本地模型）。僅支援 Context-Bundle，需使用者自行提供 API 金鑰。
+1. OpenAI 相容 API Worker（DeepSeek、Ollama 等本地模型）。僅支援 Context-Bundle，需使用者自行提供 API 金鑰。
 
 ## 離線驗證
 
@@ -126,7 +142,7 @@ python -B -m unittest discover -s tests/v2 -q
 
 若 Windows 未開啟開發人員模式，且一般使用者沒有建立符號連結的權限，相關測試會顯示為略過，屬於正常現象；有權限的環境仍會執行完整斷言。
 
-V1 的檔案交接與中斷復原規則見 [角色規範](ROLES.md) 和 [V1 盤點](docs/v2/V1_INVENTORY.md)。請讓本機設定、SQLite、任務紀錄及私人驗證報告留在本機。Git 白名單只納入專案程式、通用文件與已去識別化的測試資料。
+V1 的檔案交接與中斷復原規則見 [角色規範](ROLES.md) 和 [V1 盤點](docs/v2/V1_INVENTORY.md)。要新增 Worker Adapter，見 [docs/ADAPTERS.md](docs/ADAPTERS.md)。請讓本機設定、SQLite、任務紀錄及私人驗證報告留在本機。Git 白名單只納入專案程式、通用文件與已去識別化的測試資料。
 
 ## 開發方式
 
@@ -138,4 +154,4 @@ V1 的檔案交接與中斷復原規則見 [角色規範](ROLES.md) 和 [V1 盤�
 
 每個階段都經過獨立審查與測試驗收後才合併。本專案本身就是 zMAHarness「主控負責到底、協作需經同意、結果需獨立驗收」理念的實踐。
 
-授權：MIT，見 [LICENSE](LICENSE)。同時請參閱 [DISCLAIMER.md](DISCLAIMER.md)。
+授權：MIT，見 [LICENSE](LICENSE)。同時請參閱 [DISCLAIMER.md](DISCLAIMER.md)。回報安全問題的方式見 [SECURITY.md](SECURITY.md)。

@@ -17,7 +17,7 @@
 
 ## 專案狀態與責任界線
 
-本專案按現狀（**AS IS**）提供。已驗證的路徑為 Gemini CLI 派工、獨立驗收與離線重收集。請先以非敏感測試任務驗證所在環境。GUI 工作流與其他 Worker 的支援狀態見 [README](README.md)。
+本專案按現狀（**AS IS**）提供。已驗證的路徑為 Gemini（`agy-print`）、Claude（`claude-print`）與 GPT（`codex-exec`）的 Context-Bundle 唯讀派工、獨立驗收與離線重收集；各 Worker 的驗收範圍見 [README](README.md) 的「Worker 驗收狀態」。請先以非敏感測試任務驗證所在環境。GUI 工作流與其他 Worker 的支援狀態見 [README](README.md)。
 
 在適用法律允許的範圍內，專案作者及貢獻者不對因使用本專案造成的損失作出額外保證或承擔可依法排除的責任。**本聲明不能修改任何第三方平台的服務條款，也不能當然免除依法不得排除的責任。** 此文件為使用風險告知，不構成法律意見。
 

@@ -1,3 +1,5 @@
+> 這是早期設計文件，現況以 [README](../../README.md) 與 [docs/ADAPTERS.md](../ADAPTERS.md) 為準。
+
 # MultiAgentHarness Phase 0A｜V1 原始碼盤點與相容性映射
 
 - 盤點日期為 2026-11-11（台灣時間）。工作區為 `MultiAgentHarness`，分支 `main`，基準為 `b7277e42bdc120296ba0f52f8242c899171a878e`。開始時 `git status --short --branch --untracked-files=all` 顯示本機 `main` 與既有的 `origin/main` 追蹤引用一致，無待提交變更。兩份已複製的正式文件當時受忽略規則排除。

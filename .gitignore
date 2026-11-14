@@ -5,6 +5,7 @@
 !/README.en.md
 !/LICENSE
 !/DISCLAIMER.md
+!/SECURITY.md
 !/.github/
 !/.github/workflows/
 !/.github/workflows/test.yml

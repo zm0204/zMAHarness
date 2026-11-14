@@ -1,3 +1,5 @@
+> 這是早期設計文件，現況以 [README](../../README.md) 與 [docs/ADAPTERS.md](../ADAPTERS.md) 為準。
+
 # MultiAgentHarness V2 分階段實作計畫
 
 > **版本：** V2.0-plan（配套 `MultiAgentHarness_V2_Final_Spec.md`）
