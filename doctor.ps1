@@ -268,7 +268,7 @@ if ($codexHome) {
     $globalInstructions = @('AGENTS.md', 'AGENTS.override.md') | ForEach-Object { Join-Path $codexHome $_ } |
         Where-Object { [IO.File]::Exists($_) -and (Get-Item -LiteralPath $_).Length -gt 0 }
     if ($globalInstructions) {
-        Report-Check '需人工驗證' 'Codex 全域指示' ("codex-exec Worker 會注入這些檔案的內容：" + ($globalInstructions -join '、') + "。Context-Bundle 模式工具全關，影響僅限回答內容，輸出仍受 schema 與 Verifier 約束。")
+        Report-Check '需人工驗證' 'Codex 全域指示' ("codex-exec Worker 會注入這些檔案的內容：" + ($globalInstructions -join '、') + "。這些指示可能影響回答內容，輸出仍受 schema 與 Verifier 約束。")
     }
 }
 
@@ -289,19 +289,20 @@ if ($python -and -not $pathsFailed) {
     }
     catch { Report-Check '需人工驗證' 'claude-print' $_.Exception.Message }
 
-    # codex-exec 只查設定與執行檔位置，不執行 codex。
+    # codex-exec 查設定與執行檔位置，並只執行 codex --version（不連網、不推論）顯示 cli_version。
     try {
-        $codexQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; c = load_config(None); print(json.dumps({''found'': executable_lookup(''codex-exec'')(c) is not None, ''enabled'': adapter_enabled(c, ''codex-exec'')}))'
+        $codexQuery = 'import json, subprocess, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; from mah.adapters.codex_exec import codex_environment; c = load_config(None); e = executable_lookup(''codex-exec'')(c); v = subprocess.run([str(e), ''--version''], stdin=subprocess.DEVNULL, capture_output=True, env=codex_environment(), timeout=20).stdout.decode(''utf-8'', ''replace'').strip() if e else None; print(json.dumps({''found'': e is not None, ''enabled'': adapter_enabled(c, ''codex-exec''), ''version'': v or None}))'
         $codexRaw = & (Get-HarnessPathPython) -I -B -c $codexQuery $PSScriptRoot
         if ($LASTEXITCODE -ne 0) { throw '無法檢查 codex-exec。' }
         $codex = ($codexRaw -join "`n") | ConvertFrom-Json
+        $codexVersion = if ($codex.version) { "cli_version：$($codex.version)" } else { 'cli_version：無法讀取' }
         if (-not $codex.found) {
             Report-Check '需人工驗證' 'codex-exec' '未找到 codex 原生執行檔（.exe）。使用 GPT Worker 前請安裝 Codex CLI，或在本機 TOML 把 codex_command 設成 codex.exe 的絕對路徑。'
         }
         elseif (-not $codex.enabled) {
-            Report-Check '需人工驗證' 'codex-exec' '已找到 codex 原生執行檔，但 codex-exec 不在 adapters.enabled。要使用 GPT Worker，請在本機 TOML 的 adapters.enabled 加入 "codex-exec"。'
+            Report-Check '需人工驗證' 'codex-exec' "已找到 codex 原生執行檔（$codexVersion），但 codex-exec 不在 adapters.enabled。要使用 GPT Worker，請在本機 TOML 的 adapters.enabled 加入 `"codex-exec`"。"
         }
-        else { Report-Check '通過' 'codex-exec' '已啟用，並找到 codex 原生執行檔。' }
+        else { Report-Check '通過' 'codex-exec' "已啟用，並找到 codex 原生執行檔（$codexVersion）。" }
     }
     catch { Report-Check '需人工驗證' 'codex-exec' $_.Exception.Message }
 }

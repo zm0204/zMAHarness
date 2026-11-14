@@ -26,7 +26,7 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 Codex 請求沙盒外或提權執行；Claude Code 使用一般的權限確認。被拒絕時回報原因，由主控 Agent 自己繼續原任務。
 使用 `claude-print` 時，Card 的 `allowed_targets` 與 `dispatch` 都用 `--adapter claude-print`，模型寫 `sonnet` 或 `opus`，
 effort 用 `--effort`。它只支援 Review、Second Opinion 與 Research，不支援 delegate-implement。
-使用 `codex-exec` 時，`allowed_targets` 與 `dispatch` 都用 `--adapter codex-exec`，模型寫完整 GPT ID（例如 `gpt-5.6-luna`），
+使用 `codex-exec` 時，`allowed_targets` 與 `dispatch` 都用 `--adapter codex-exec`，模型寫完整 GPT ID（例如 `gpt-6-luna`），
 effort 只能 `low`、`medium`、`high`、`xhigh`。它只支援 Context-Bundle 與唯讀模板；Disposable Worktree
 會在預留 Grant 之前以結束碼 17 拒絕；Worker 輸出出現任何工具呼叫時，結果以 `codex_tool_item_observed` 判為失敗。
 delegate-implement 對所有 Worker 都是延後階段的功能，`card create` 會以結束碼 2 拒絕，不要提議。主控是 Codex 時不主動建議它，只有使用者明確指定才用。

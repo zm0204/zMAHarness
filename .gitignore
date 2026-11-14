@@ -62,12 +62,14 @@
 !/mah/adapters/cli_worker.py
 !/mah/adapters/claude_print.py
 !/mah/adapters/codex_exec.py
+!/mah/adapters/codex_probe.py
 !/tests/v2/test_codex_exec.py
 !/tests/v2/test_cli_worker.py
 !/tests/v2/test_claude_print.py
 !/tests/v2/fixtures/claude-2.1.325-bundle-smoke-redacted.json
 !/tests/v2/fixtures/codex-0.154.0-bundle-smoke-redacted.jsonl
 !/tests/v2/fixtures/codex-0.154.0-bundle-smoke-last-message.json
+!/tests/v2/fixtures/codex-0.169.0-usage-limit-redacted.jsonl
 !/docs/v2/CODEX_SMOKE_TEST.md
 !/docs/v2/CLAUDE_SMOKE_TEST.md
 !/mah/preflight.py

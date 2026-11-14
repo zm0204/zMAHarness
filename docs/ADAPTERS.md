@@ -12,7 +12,7 @@
 | --- | --- |
 | `id` | Adapter 名稱，寫入帳本 `runs.adapter` 與卡片目標，必須與註冊名稱相同。 |
 | `manager` | 綁定的 `RunManager`。`dispatch` 會拒絕綁定其他 Manager 的實例。 |
-| `prepare_invocation(...)` | 在預留 Grant 之前驗證輸入，建立固定的啟動計畫。不得啟動 Worker 的工作程序或送出模型請求，但可以為了確認能力執行 Worker 的探測指令：`CliWorkerAdapter` 與 `agy-print` 會在這裡執行 `--version` 與 `--help`（`codex-exec` 是 `--version` 與 `exec --help`）。回傳物件須提供 `workspace_kind`、`cwd`、`timeout_s`。拒絕時丟出 `LedgerError`。 |
+| `prepare_invocation(...)` | 在預留 Grant 之前驗證輸入，建立固定的啟動計畫。正式模型派工須等到啟動權核銷。此步驟可執行版本、參數等檢查。Codex 的工具宣告探測只使用本機替身、假金鑰與合成提示。回傳物件須提供 `workspace_kind`、`cwd`、`timeout_s`。拒絕時丟出 `LedgerError`。 |
 | `launch(plan)` | 先呼叫 `manager.claim_launch(run_id, invocation=...)`，再啟動 Worker 一次。這是唯一可以啟動 Worker 的地方。 |
 | `observe(handle)` | 等待 Worker 結束或達到核准期限，回傳觀測結果，不得發布結果。 |
 | `persist_capture(handle, capture)` | 把觀測結果封存到 Run 目錄，讓復原時不必重新啟動。 |
@@ -73,8 +73,7 @@
 
 ### codex-exec
 
-`codex-exec`（[`codex_exec.py`](../mah/adapters/codex_exec.py)）只啟動原生 `codex.exe`，停用所有工具，**只支援 Context-Bundle**：
-Codex 只能透過 shell 或 code mode 工具讀檔，而 `-s read-only` 的讀取範圍是整台電腦，無法綁在 Disposable Worktree 內。
+`codex-exec`（[`codex_exec.py`](../mah/adapters/codex_exec.py)）只啟動原生 `codex.exe`，**只支援 Context-Bundle**。`-s read-only` 無法把讀取範圍綁在 Disposable Worktree 內。
 
 - Disposable Worktree 與非唯讀模板一律在預留 Grant 之前以結束碼 17 拒絕。預設設定 `defaults.delegate_implement.adapter` 雖然仍是
   `codex-exec`，delegate-implement 卡片在建立時就以結束碼 2 拒絕（延後階段的功能，所有 Worker 都一樣）。
@@ -83,9 +82,20 @@ Codex 只能透過 shell 或 code mode 工具讀檔，而 `-s read-only` 的讀�
   不寫出 `result.json` 與 `DONE`；收據的 `observation.tool_items` 記錄實際類型。`error` 是 CLI 的提示（smoke 中為 Code Mode 不可用），不算工具。
 - 結構化結果以 `-o` 寫出的 last message 檔為準，並必須與 JSONL 最後一則 agent message 一致；`--output-schema` 由共用的
   `_response_schema` 以程式轉換成嚴格相容版（移除 `minLength` 等關鍵字、`const` 改成單值 `enum`），Verifier 仍以完整模板規則驗收。
-- 殘餘風險：`apply_patch` 工具沒有可關閉的設定，以 `-s read-only`、空的 Bundle 目錄與 `approval_policy="never"` 圍堵。
+- 派工前以空白 `CODEX_HOME` 檢查 `features list`，並用同版 CLI 實際探測頂層 `tools` 和 `input` 裡的 `additional_tools`。只接受空集合或 `functions.exec`、`functions.wait` 這一組。這兩個 code-mode 宣告可見時，執行端的 `code_mode_host` 與 `disable_in_process_fallback` 必須皆為 `false`。多出任何工具或無法驗證時，以結束碼 17 拒絕。日後若 Codex 提供正式的零工具入口，改用該入口。
+- 正式端使用 ChatGPT 登入下的 `CODEX_HOME/models_cache.json`。探測複製這份快取到全新的無憑證 `CODEX_HOME`，並經由 `127.0.0.1` 的 `/models` 提供完全相同的位元組。必須先觀察到 CLI 取得目錄，才接受後續工具宣告。來源、複本、HTTP 回應與模型項目的雜湊寫入 `invocation.json`。探測結果以執行檔、模型、effort、參數與功能狀態、模型中繼資料為鍵存放在 state。啟動前會重新核對，證據不同就拒絕。
+- 正式 argv 固定含 `--ignore-user-config`（3b 起），所以 `config.toml` 的 `mcp_servers`、`plugins`、`[features]` 不會載入 Worker，和探測使用的空白 `CODEX_HOME` 等價（rust-v0.169.0 [`config/src/loader/mod.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/config/src/loader/mod.rs#L550-L566) 會把使用者層換成空表）。
+- 快取不新鮮（距 `fetched_at` 超過 270 秒）時，prepare 會用正式環境執行一次 `codex debug models`（有網路、不推論）刷新後再讀取；0.169.0 實測會改寫快取。launch 緊接在 prepare 之後，快取仍新鮮，不會再刷新。期間若有其他 Codex 程序改寫快取，hash 不同就以結束碼 17 拒絕，重新派工即可。
+- 不鎖定 CLI 版本：快取的 `client_version` 必須等於實際執行的 `codex --version`。升級後只要功能清單或工具宣告不合格，就以結束碼 17 拒絕。
+- 殘餘風險：`debug models` 不接受 `--ignore-user-config`，會讀 `config.toml`；若其中設定了非預設的模型供應商，或 Codex 的正式程序在啟動後自行刷新模型目錄，正式執行看到的目錄可能和探測不同。JSONL 工具項目檢查與工作目錄前後快照仍會執行，涵蓋可觀察的工具事件與檔案變更。
+- Codex CLI 0.169.0 的本機訂閱目錄實測會為 `gpt-6.1-sol · low` 額外宣告 `functions.send_message_to_user_async`，所以此組合在派工前被拒絕。這個工具是依模型中繼資料的 `experimental_supported_tools` 註冊，`--disable` 關不掉（[`spec_plan.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/spec_plan.rs#L1398-L1406)），因此 Sol 的任何 effort 都會被拒絕。不把它加入允許集合，原因有三：
+  1. 每次呼叫都會送一筆遙測（thread、turn、call ID、工具名稱、時間與狀態，不含訊息內容；[`control_tool_analytics.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/control_tool_analytics.rs)）。
+  2. 它產生的 item 會交給擴充功能的生命週期 hook，這條路徑尚未完全追查（[`session/mod.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/session/mod.rs#L3088-L3125)）。
+  3. 它在 JSONL 中顯示為一般的 `agent_message`，沒有可區分的欄位，還會成為 final message，所以 A7 的工具項目檢查看不出它被呼叫過（[`event_processor_with_jsonl_output.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L484-L495)）。
+
+  重新評估的條件：Codex 官方公開零工具入口，或上述 hook 路徑查證完成。在那之前，一般 Review 用 `gpt-6.1-terra · medium`，T1 第二意見用 `gpt-6.1-terra · high`；`gpt-6.1-terra` 只宣告允許的兩項，已通過本機探測。舊版真實派工收據仍可查核。
 - 殘餘風險：`CODEX_HOME` 的全域 `AGENTS.md`（及 `AGENTS.override.md`）會注入 Worker，目前沒有可關閉的設定；`project_doc_max_bytes=0` 只擋專案層級的指示。
-  Context-Bundle 模式工具全關，影響僅限回答內容，輸出仍受 schema 與 Verifier 約束。Doctor 偵測到非空的全域指示時會以「需人工驗證」提示。
+  這些指示可能影響回答內容，輸出仍受 schema 與 Verifier 約束。Doctor 偵測到非空的全域指示時會以「需人工驗證」提示。
 
 ## 4. 選用能力：收據完整性檢查
 

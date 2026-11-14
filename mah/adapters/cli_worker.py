@@ -145,7 +145,14 @@ class CliWorkerAdapter:
         raise NotImplementedError
 
     # ---- Optional hooks (defaults keep metadata, process records and receipts unchanged) -----------
-    def argv_context(self, *, run_id, directory, cwd):
+    def invocation_profile(self, plan):
+        """Collect adapter-specific prelaunch evidence. The default adds no evidence."""
+        return None
+
+    def invocation_mismatch(self):
+        return LedgerError(20, f"{self.id} launch arguments do not match the prepared invocation")
+
+    def argv_context(self, *, run_id, directory, cwd, profile=None):
         """Extra keyword arguments for build_argv, for example run-directory or worker-directory paths."""
         return {}
 
@@ -248,7 +255,7 @@ class CliWorkerAdapter:
         kind = "read_only" if bundle is not None else "disposable_worktree"
         if not self.flags_for(kind) <= capabilities["flags"]:
             raise LedgerError(15, f"{self.id} does not report all required flags")
-        plan = self.build_invocation(
+        plan = self.prepare_plan(
             run_id=run_id, template=template, model=model, effort=effort, task=task, task_text=task_text,
             cwd=cwd, directory=directory, timeout_s=timeout_s, executable=exe, baseline=baseline,
             cli_version=capabilities["cli_version"], requirements=requirements,
@@ -256,14 +263,19 @@ class CliWorkerAdapter:
         self._guard_argv(plan)
         return plan
 
+    def prepare_plan(self, **inputs):
+        plan = self.build_invocation(**inputs)
+        profile = self.invocation_profile(plan)
+        return plan if profile is None else self.build_invocation(**inputs, profile=profile)
+
     def build_invocation(self, *, run_id, template, model, effort, task, task_text, cwd, directory, timeout_s,
-                         executable, baseline, cli_version, requirements):
+                         executable, baseline, cli_version, requirements, profile=None):
         """Build a fixed argument vector and stdin prompt. No probe, shell expansion, or launch."""
         bundle = self._bundle_for_launch(task, template)
         kind = "read_only" if bundle is not None else "disposable_worktree"
         schema = _response_schema(run_id, template, self.manager.max_summary_chars)
         argv = self.build_argv(executable, model=model, effort=effort, kind=kind, schema=schema,
-                               **self.argv_context(run_id=run_id, directory=directory, cwd=cwd))
+                               **self.argv_context(run_id=run_id, directory=directory, cwd=cwd, profile=profile))
         if os.name == "nt" and len(subprocess.list2cmdline(argv).encode("utf-16-le")) // 2 >= 32767:
             raise LedgerError(16, "Schema exceeds the Windows command-line limit")
         prompt = self.prompt_bytes(run_id, template, task_text)
@@ -283,6 +295,8 @@ class CliWorkerAdapter:
         if bundle is not None:
             metadata.update(launch_profile="context-bundle", bundle_manifest_sha256=bundle[1],
                             permissions_observed="unknown", sandbox_observed="unknown", tools_observed="unknown")
+        if profile is not None:
+            metadata["preflight"] = profile
         return InvocationPlan(run_id, argv, cwd, kind, timeout_s, _bytes(metadata), baseline,
                               sha256(task).hexdigest(), model, effort, template, directory / stdin_name)
 
@@ -306,14 +320,14 @@ class CliWorkerAdapter:
         if status or baseline != plan.baseline:
             raise LedgerError(20, "Worker directory changed before launch")
         task_text = task.decode("utf-8-sig")
-        expected = self.build_invocation(
+        expected = self.prepare_plan(
             run_id=plan.run_id, template=run["template"], model=run["model_requested"],
             effort=run["effort_requested"], task=task, task_text=task_text, cwd=plan.cwd, directory=directory,
             timeout_s=plan.timeout_s, executable=self.resolve_executable(), baseline=baseline,
             cli_version=metadata["cli_version"], requirements=requirements_for(metadata["verification_requirements"]),
         )
         if expected != plan:
-            raise LedgerError(20, f"{self.id} launch arguments do not match the prepared invocation")
+            raise self.invocation_mismatch()
         if plan.workspace_kind == "read_only":
             grant = manager.ledger.get_grant(run["grant_id"])
             if grant is None or grant["max_dispatches"] != 1:

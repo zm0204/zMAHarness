@@ -93,6 +93,7 @@ class WorkerFixture:
 
     adapter_name = "test-cli"
     model = "synthetic"
+    cli_version = "stand-in 1.0"
 
     def make_adapter(self):
         return MinimalWorker(self.manager, command=self.executable)
@@ -162,7 +163,7 @@ class WorkerFixture:
         self.task, self.workspace = task, workspace
         self.grant_id = self.grant(task, workspace, timeout=timeout)
         self.run_id = run_id or f"{self.adapter_name.split('-')[0]}-{uuid4().hex}"
-        probe = {"available": True, "cli_version": "stand-in 1.0", "flags": set(self.adapter.flags_for(
+        probe = {"available": True, "cli_version": self.cli_version, "flags": set(self.adapter.flags_for(
             "read_only" if bundle else "disposable_worktree"))}
         with patch.object(self.adapter, "probe", return_value=probe), \
                 patch("mah.adapters.cli_worker.Popen", side_effect=popen or self.substitute):
