@@ -82,18 +82,36 @@
   不寫出 `result.json` 與 `DONE`；收據的 `observation.tool_items` 記錄實際類型。`error` 是 CLI 的提示（smoke 中為 Code Mode 不可用），不算工具。
 - 結構化結果以 `-o` 寫出的 last message 檔為準，並必須與 JSONL 最後一則 agent message 一致；`--output-schema` 由共用的
   `_response_schema` 以程式轉換成嚴格相容版（移除 `minLength` 等關鍵字、`const` 改成單值 `enum`），Verifier 仍以完整模板規則驗收。
-- 派工前以空白 `CODEX_HOME` 檢查 `features list`，並用同版 CLI 實際探測頂層 `tools` 和 `input` 裡的 `additional_tools`。只接受空集合或 `functions.exec`、`functions.wait` 這一組。這兩個 code-mode 宣告可見時，執行端的 `code_mode_host` 與 `disable_in_process_fallback` 必須皆為 `false`。多出任何工具或無法驗證時，以結束碼 17 拒絕。日後若 Codex 提供正式的零工具入口，改用該入口。
+- 派工前以空白 `CODEX_HOME` 檢查 `features list`，並用同版 CLI 實際探測頂層 `tools` 和 `input` 裡的 `additional_tools`。只接受空集合或 `functions.exec`、`functions.wait` 這一組，再加上該模型中繼資料宣告、已在下方查證的 EXPLAINED_TOOLS。這兩個 code-mode 宣告可見時，執行端的 `code_mode_host` 與 `disable_in_process_fallback` 必須皆為 `false`。多出任何工具或無法驗證時，以結束碼 17 拒絕。日後若 Codex 提供正式的零工具入口，改用該入口。
 - 正式端使用 ChatGPT 登入下的 `CODEX_HOME/models_cache.json`。探測複製這份快取到全新的無憑證 `CODEX_HOME`，並經由 `127.0.0.1` 的 `/models` 提供完全相同的位元組。必須先觀察到 CLI 取得目錄，才接受後續工具宣告。來源、複本、HTTP 回應與模型項目的雜湊寫入 `invocation.json`。探測結果以執行檔、模型、effort、參數與功能狀態、模型中繼資料為鍵存放在 state。啟動前會重新核對，證據不同就拒絕。
 - 正式 argv 固定含 `--ignore-user-config`（3b 起），所以 `config.toml` 的 `mcp_servers`、`plugins`、`[features]` 不會載入 Worker，和探測使用的空白 `CODEX_HOME` 等價（rust-v0.169.0 [`config/src/loader/mod.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/config/src/loader/mod.rs#L550-L566) 會把使用者層換成空表）。
 - 快取不新鮮（距 `fetched_at` 超過 270 秒）時，prepare 會用正式環境執行一次 `codex debug models`（有網路、不推論）刷新後再讀取；0.169.0 實測會改寫快取。launch 緊接在 prepare 之後，快取仍新鮮，不會再刷新。期間若有其他 Codex 程序改寫快取，hash 不同就以結束碼 17 拒絕，重新派工即可。
+- `codex-exec` 與 Codex Desktop 共用同一份 ChatGPT 額度。額度用完時，CLI 在 JSONL 回報 `error` 與 `turn.failed`，Run 以 `FAILED` / `process_failed` 結束，模型沒有推論。
 - 不鎖定 CLI 版本：快取的 `client_version` 必須等於實際執行的 `codex --version`。升級後只要功能清單或工具宣告不合格，就以結束碼 17 拒絕。
 - 殘餘風險：`debug models` 不接受 `--ignore-user-config`，會讀 `config.toml`；若其中設定了非預設的模型供應商，或 Codex 的正式程序在啟動後自行刷新模型目錄，正式執行看到的目錄可能和探測不同。JSONL 工具項目檢查與工作目錄前後快照仍會執行，涵蓋可觀察的工具事件與檔案變更。
-- Codex CLI 0.169.0 的本機訂閱目錄實測會為 `gpt-6.1-sol · low` 額外宣告 `functions.send_message_to_user_async`，所以此組合在派工前被拒絕。這個工具是依模型中繼資料的 `experimental_supported_tools` 註冊，`--disable` 關不掉（[`spec_plan.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/spec_plan.rs#L1398-L1406)），因此 Sol 的任何 effort 都會被拒絕。不把它加入允許集合，原因有三：
-  1. 每次呼叫都會送一筆遙測（thread、turn、call ID、工具名稱、時間與狀態，不含訊息內容；[`control_tool_analytics.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/control_tool_analytics.rs)）。
-  2. 它產生的 item 會交給擴充功能的生命週期 hook，這條路徑尚未完全追查（[`session/mod.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/session/mod.rs#L3088-L3125)）。
-  3. 它在 JSONL 中顯示為一般的 `agent_message`，沒有可區分的欄位，還會成為 final message，所以 A7 的工具項目檢查看不出它被呼叫過（[`event_processor_with_jsonl_output.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L484-L495)）。
+- **模型中繼資料宣告的工具（EXPLAINED_TOOLS）。** `gpt-6.1-sol` 的 `experimental_supported_tools` 含 `send_message_to_user_async`，CLI 會依中繼資料註冊這個工具，`--disable` 關不掉（[`spec_plan.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/spec_plan.rs#L1399-L1407)）。它只在該模型的中繼資料宣告它時才允許出現在探測集合中；Terra 等模型列的是名稱相近的 `send_user_message_async`，不會解鎖它。依 rust-v0.169.0 查證：
+  - handler 只產生一則 `AgentMessage` item 並回傳 `{"accepted":true}`，不讀寫檔案、不執行程序、不連網（[`send_message_to_user_async.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/handlers/send_message_to_user_async.rs#L59-L103)）。
+  - 每次呼叫送一筆遙測，只含 thread、turn、call ID、工具名稱、時間與狀態，不含訊息內容（[`control_tool_analytics.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/control_tool_analytics.rs#L29-L58)）。
+  - 它在 JSONL 中顯示為一般的 `agent_message`，A7 的工具項目檢查看不出它被呼叫過（[`event_processor_with_jsonl_output.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L484-L495)）。內容一樣要經過 `-o` 與 JSONL 一致性檢查、schema 與 Verifier。
+  - extension 生命週期 hook：exec 的 in-process app-server 不論功能開關都會註冊 11 個 extension（[`app-server/src/extensions.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/extensions.rs#L52-L142)）。item 完成時只呼叫各 extension 的 `on_item_completed_with_metadata`（[`session/mod.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/session/mod.rs#L3102-L3145)），預設實作什麼都不做（[`contributors.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/ext/extension-api/src/contributors.rs#L249-L270)）。唯一覆寫它的是 goal extension：只在有 state DB 時註冊，且只在 Goals 功能開啟時動作，而 `goals` 在固定 disable 清單裡；即使開啟，也只更新記憶體中的回合統計（[`goal/extension.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/ext/goal/src/extension.rs#L297-L312)、[`goal/accounting.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/ext/goal/src/accounting.rs#L175-L215)）。
 
-  重新評估的條件：Codex 官方公開零工具入口，或上述 hook 路徑查證完成。在那之前，一般 Review 用 `gpt-6.1-terra · medium`，T1 第二意見用 `gpt-6.1-terra · high`；`gpt-6.1-terra` 只宣告允許的兩項，已通過本機探測。舊版真實派工收據仍可查核。
+  2026-11-15 的 Sol smoke（[CODEX_SMOKE_TEST.md](v2/CODEX_SMOKE_TEST.md)）派工當下，帳號回傳的 `gpt-6.1-sol` 中繼資料沒有宣告 `send_message_to_user_async`，B1 只擷取到 `functions.exec`、`functions.wait`，所以這個工具沒有在真實派工中驗證到。同一個模型的中繼資料在相隔數十秒的兩次抓取之間曾經不同，因此每次派工都要重新探測。Skill 目前仍建議 Terra。舊版真實派工收據仍可查核。
+- **探測表**（`codex-cli 0.169.0`，2026-11-15，本機替身，不推論；每次派工前都會重新探測，這張表只是當時的紀錄）。
+  所有模型的 `tool_mode` 都是 `code_mode_only`。B2 在每一列都相同：disable 78 項，仍開啟的只有 `secret_auth_storage`、`unified_exec`（`shell_tool` 為 `false`），以及 7 個 `removed` 階段的已說明功能。帳號另有兩個隱藏模型，不列在表中。
+
+  | 模型 | effort | 擷取到的工具集合 | 結果 |
+  | --- | --- | --- | --- |
+  | `gpt-6.1-sol` | low、high | `functions.exec`、`functions.wait`、`functions.send_message_to_user_async` | 通過（中繼資料宣告了 `send_message_to_user_async`） |
+  | `gpt-6.1-terra` | low、high | `functions.exec`、`functions.wait` | 通過 |
+  | `gpt-6-astra` | low、high | `functions.exec`、`functions.wait` | 通過 |
+  | `gpt-6-sol` | low、high | `functions.exec`、`functions.wait` | 通過 |
+  | `gpt-6-luna` | low、high | `functions.exec`、`functions.wait` | 通過 |
+  | `gpt-5.6-sol` | low、high | `functions.exec`、`functions.wait` | 通過 |
+  | `gpt-5.6-terra` | low、high | `functions.exec`、`functions.wait` | 通過 |
+  | `gpt-5.6-luna` | low、high | `functions.exec`、`functions.wait` | 通過 |
+
+  在加入 EXPLAINED_TOOLS 之前，`gpt-6.1-sol` 兩種 effort 都以「functions 底下出現未預期的 `send_message_to_user_async`」被拒絕。6.x 的其他模型在中繼資料列的是 `send_user_message_async` 和 `clock`，0.169.0 沒有註冊這兩個工具；日後版本若註冊，B1 會拒絕。
+- 出卡前檢查（`mah preflight`）也會經由 `codex app-server` 的 `account/rateLimits/read` 唯讀查詢 ChatGPT 額度（不推論）。只有明確查到 `ordinaryUsageAllowed` 為 `false` 時，出卡前檢查才以「ChatGPT 額度已用完，重設時間 <本地時間>」擋下；查詢失敗、逾時或格式無法解讀時不擋，Doctor 會顯示結果。程式只送出 `initialize`、`initialized` 和這個查詢，不使用額度重設券。
 - 殘餘風險：`CODEX_HOME` 的全域 `AGENTS.md`（及 `AGENTS.override.md`）會注入 Worker，目前沒有可關閉的設定；`project_doc_max_bytes=0` 只擋專案層級的指示。
   這些指示可能影響回答內容，輸出仍受 schema 與 Verifier 約束。Doctor 偵測到非空的全域指示時會以「需人工驗證」提示。
 

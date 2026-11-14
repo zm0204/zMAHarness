@@ -54,10 +54,11 @@ def git_toplevel(path):
 
 
 def preflight(repo, adapter, config_path=None):
-    """No ledger, no quota query and no writes under zMAHarness or the project. Returns the report.
+    """No ledger and no writes under zMAHarness or the project. Returns the report.
 
     For claude-print and codex-exec it runs the CLI's own login status command (no inference request);
-    that CLI may refresh files in its own home folder.
+    that CLI may refresh files in its own home folder. For codex-exec it also reads the ChatGPT quota
+    (read-only, no inference) and blocks only when the quota is confirmed exhausted.
     """
     reasons = []
     repo_root, git_reason = git_toplevel(repo)

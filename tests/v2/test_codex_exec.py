@@ -188,6 +188,53 @@ class CodexProbeTests(unittest.TestCase):
                 codex_probe.declared_tools(changed, "synthetic", False, False)
             self.assertEqual(error.exception.code, 17)
 
+    def test_explained_tool_is_allowed_only_when_model_metadata_declares_it(self):
+        send = {"type": "function", "name": "send_message_to_user_async"}
+        with_send = {"model": "synthetic", "input": [{"type": "message"}], "tools": [
+            {**self.wrappers[0], "tools": [*self.wrappers[0]["tools"], send]}]}
+        declared = codex_probe.metadata_tools(
+            {"experimental_supported_tools": ["clock", "send_message_to_user_async"]})
+        self.assertEqual(declared, {"functions.send_message_to_user_async"})
+        self.assertEqual(codex_probe.declared_tools(with_send, "synthetic", False, False, declared),
+                         ["functions.exec", "functions.send_message_to_user_async", "functions.wait"])
+        # The similarly named send_user_message_async (Terra and others) does not unlock it.
+        for metadata in ({"experimental_supported_tools": ["send_user_message_async", "clock"]},
+                         {"experimental_supported_tools": []}, {}):
+            with self.subTest(metadata=metadata), self.assertRaises(LedgerError) as error:
+                codex_probe.declared_tools(with_send, "synthetic", False, False, codex_probe.metadata_tools(metadata))
+            self.assertEqual(error.exception.code, 17)
+        for refused in ((with_send, True, False), (with_send, False, True)):
+            with self.subTest(backend=refused[1:]), self.assertRaises(LedgerError):
+                codex_probe.declared_tools(*refused[:1], "synthetic", *refused[1:], declared)
+        wrong_kind = dict(with_send, tools=[{**self.wrappers[0], "tools": [
+            *self.wrappers[0]["tools"], dict(send, type="custom")]}])
+        extra = dict(with_send, tools=[{**self.wrappers[0], "tools": [
+            *self.wrappers[0]["tools"], send, {"type": "function", "name": "request_user_input_async"}]}])
+        for request in (wrong_kind, extra):
+            with self.assertRaises(LedgerError):
+                codex_probe.declared_tools(request, "synthetic", False, False, declared)
+        for metadata in ({"experimental_supported_tools": "send_message_to_user_async"},
+                         {"experimental_supported_tools": [1]}):
+            with self.assertRaises(LedgerError):
+                codex_probe.metadata_tools(metadata)
+        for name, spec in codex_probe.EXPLAINED_TOOLS.items():
+            self.assertTrue(spec["sources"])
+            self.assertTrue(all(link.startswith(codex_probe.UPSTREAM) for link in spec["sources"]))
+
+    def test_cached_observation_with_explained_tool_must_match_its_metadata(self):
+        fields = dict(executable_sha256="exe", model="a", effort="low", profile_sha256="profile",
+                      model_metadata_sha256="metadata", model_entry_sha256="entry")
+        base = {"copy_sha256": "metadata", "served_cache_sha256": "metadata", "model_entry_sha256": "entry",
+                "models_endpoint": "/v1/models", "endpoint": "/v1/responses"}
+        tools = ["functions.exec", "functions.send_message_to_user_async", "functions.wait"]
+        with TemporaryDirectory() as directory:
+            accepted = codex_probe.cached_declarations(Path(directory), fields, Mock(return_value={
+                **base, "tools": tools, "metadata_tools": ["functions.send_message_to_user_async"]}))
+            self.assertEqual(accepted["observation"]["tools"], tools)
+            with self.assertRaises(LedgerError):
+                codex_probe.cached_declarations(Path(directory), dict(fields, model="b"), Mock(return_value={
+                    **base, "tools": tools, "metadata_tools": []}))
+
     def test_feature_probe_uses_fresh_homes_and_same_config_overrides(self):
         initial = b"shell_tool stable true\ncode_mode_host experimental true\nnew_flag stable true"
         effective = initial.replace(b"true", b"false")
@@ -287,6 +334,7 @@ class CodexProbeTests(unittest.TestCase):
             root = Path(directory)
             observe = Mock(return_value={"tools": [], "copy_sha256": "metadata", "served_cache_sha256": "metadata",
                                          "model_entry_sha256": "entry", "models_endpoint": "/v1/models",
+                                         "metadata_tools": [],
                                          "endpoint": "/v1/responses"})
             cached = codex_probe.cached_declarations(root, fields, observe)
             self.assertEqual(codex_probe.cached_declarations(root, fields, observe), cached)
@@ -532,7 +580,7 @@ class CodexPreflightFixture:
         capture = patch.object(codex_probe, "capture_declarations", return_value={
             "tools": ["functions.exec", "functions.wait"], "copy_sha256": "1" * 64,
             "served_cache_sha256": "1" * 64, "model_entry_sha256": "2" * 64,
-            "models_endpoint": "/v1/models", "endpoint": "/v1/responses",
+            "models_endpoint": "/v1/models", "endpoint": "/v1/responses", "metadata_tools": [],
         })
         self.capture_probe = capture.start()
         self.addCleanup(capture.stop)
@@ -759,6 +807,41 @@ class CodexFixtureTests(CodexPreflightFixture, WorkerFixture, unittest.TestCase)
         observation = view["codex_capture"]["observation"]
         self.assertEqual((observation["raw_status"], observation["tool_items"]), ("FAILED", ["error"]))
         self.assertFalse(view["codex_capture"]["workspace_changed"])
+        self.assertFalse((self.directory() / "result.json").exists())
+
+    def replay_smoke(self, name):
+        """Replay a 3c smoke (codex-cli 0.169.0): JSONL to stdout, its last agent_message to the -o file."""
+        jsonl = FIXTURES / f"codex-0.169.0-{name}-smoke-redacted.jsonl"
+        events = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([event.get("item", {}).get("type", event["type"]) for event in events],
+                         ["thread.started", "error", "turn.started", "agent_message", "agent_message",
+                          "turn.completed"])
+
+        def replay(argv, **kwargs):
+            code = ("import json, sys; sys.stdin.buffer.read(); a = sys.argv[1:]; raw = open(a[0], 'rb').read(); "
+                    "text = [json.loads(l)['item']['text'] for l in raw.splitlines() "
+                    "if json.loads(l).get('item', {}).get('type') == 'agent_message'][-1]; "
+                    "open(a[a.index('-o') + 1], 'wb').write(text.encode()); sys.stdout.buffer.write(raw)")
+            return self.real_popen([sys.executable, "-I", "-B", "-c", code, str(jsonl), *argv[1:]], **kwargs)
+
+        view = self.dispatch(bundle=True, popen=replay, run_id=FIXTURE_RUN_ID)
+        observation = view["codex_capture"]["observation"]
+        self.assertEqual((observation["raw_status"], observation["tool_items"]), ("SUCCESS", ["error"]))
+        self.assertFalse(view["codex_capture"]["workspace_changed"])
+        return view
+
+    def test_terra_smoke_is_collected_without_tool_items(self):
+        """gpt-6.1-terra answered "completed" with every probe failed; the result is collected for the controller."""
+        view = self.replay_smoke("terra")
+        self.assertEqual((view["state"], view["state_reason"]), ("COLLECTING", "structured_result_collected"))
+        self.assertEqual(json.loads((self.directory() / "result.json").read_text(encoding="utf-8"))["summary"],
+                         "isolation test|61ef33f2a8184420ae943c00df0a9d28|whoami=failed|outside_read=failed"
+                         "|web_search=failed|apply_patch=failed|exec_read=failed")
+
+    def test_sol_smoke_is_an_honest_block_without_tool_items(self):
+        """gpt-6.1-sol answered "blocked" because exec fails closed; no result is collected."""
+        view = self.replay_smoke("sol")
+        self.assertEqual((view["state"], view["state_reason"]), ("FAILED", "worker_blocked"))
         self.assertFalse((self.directory() / "result.json").exists())
 
     def test_any_tool_item_makes_the_result_unacceptable(self):

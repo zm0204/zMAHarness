@@ -11,6 +11,8 @@ reported as signed in without validation). The CLI may update files in its own h
 - codex 0.154.0, ``codex login status``: the last status line on stderr is ``Logged in using ChatGPT``
   for a subscription; ``Logged in using an API key - ...``, token or Bedrock variants, or
   ``Not logged in`` otherwise.
+- codex 0.169.0, after a ChatGPT sign-in: ``account/rateLimits/read`` through ``codex app-server``
+  (read-only). Only ``ordinaryUsageAllowed: false`` blocks the card; failures never block.
 """
 from datetime import UTC, datetime
 import json
@@ -82,7 +84,116 @@ def codex_login_reasons(executable):
             "請執行 codex logout 後再以 codex login 用 ChatGPT 帳號登入。"]
 
 
-LOGIN_CHECKS = {"claude-print": claude_login_reasons, "codex-exec": codex_login_reasons}
+# ChatGPT quota through `codex app-server` JSON-RPC over stdio (codex 0.169.0). Only these three messages are
+# ever sent; the request is read-only and makes no inference. Reset credits are never used.
+# https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server-protocol/src/protocol/common.rs#L1437-L1441
+QUOTA_MESSAGES = (
+    {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "zmaharness-preflight", "title": None,
+                                                                 "version": "1"}}},
+    {"method": "initialized"},
+    {"id": 2, "method": "account/rateLimits/read"},
+)
+QUOTA_TIMEOUT_SECONDS = 20
+
+
+def _quota_reply(executable, environment, timeout):
+    """The JSON-RPC response to request 2, or None on any failure. Never raises."""
+    import threading
+
+    try:
+        process = subprocess.Popen([str(executable), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, shell=False, env=environment)
+    except (OSError, ValueError):
+        return None
+    replies = []
+    finished = threading.Event()
+
+    def read():
+        try:
+            for raw in process.stdout:
+                message = json.loads(raw)
+                if isinstance(message, dict) and message.get("id") == 2:
+                    replies.append(message)
+                    break
+        except (OSError, ValueError):
+            pass
+        finished.set()
+
+    threading.Thread(target=read, daemon=True).start()
+    try:
+        for message in QUOTA_MESSAGES:
+            process.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+        process.stdin.flush()
+        finished.wait(timeout)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            process.kill()
+            process.wait(5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        for stream in (process.stdin, process.stdout):
+            try:
+                stream.close()
+            except OSError:
+                pass
+    return replies[0] if replies else None
+
+
+def _reset_time(result):
+    """Latest reset among exhausted windows, else the upsell reset time; None when unknown."""
+    times = []
+    for limits in (result.get("rateLimits"), *(result.get("rateLimitsByLimitId") or {}).values()):
+        if not isinstance(limits, dict):
+            continue
+        for window in (limits.get("primary"), limits.get("secondary")):
+            if (isinstance(window, dict) and isinstance(window.get("resetsAt"), int)
+                    and isinstance(window.get("usedPercent"), (int, float)) and window["usedPercent"] >= 100):
+                times.append(window["resetsAt"])
+    upsell = result.get("rateLimitUpsell")
+    if not times and isinstance(upsell, dict) and isinstance(upsell.get("reset_at"), int):
+        times.append(upsell["reset_at"])
+    return max(times) if times else None
+
+
+def codex_quota_status(executable, *, timeout=QUOTA_TIMEOUT_SECONDS):
+    """("exhausted", reset epoch or None), ("available", None) or ("unknown", detail). Never raises."""
+    from .adapters.codex_exec import codex_environment
+
+    reply = _quota_reply(executable, codex_environment(), timeout)
+    result = reply.get("result") if isinstance(reply, dict) else None
+    if not isinstance(result, dict):
+        return "unknown", "無法查詢" if reply is None else "回應格式無法解讀"
+    allowed = result.get("ordinaryUsageAllowed")
+    if allowed is False:
+        return "exhausted", _reset_time(result)
+    if allowed is True:
+        return "available", None
+    return "unknown", "回應格式無法解讀"
+
+
+def local_time(epoch):
+    if epoch is None:
+        return "未知"
+    try:
+        moment = datetime.fromtimestamp(epoch, UTC).astimezone()
+    except (OverflowError, OSError, ValueError):
+        return "未知"
+    return moment.strftime("%Y-%m-%d %H:%M（UTC%z）")
+
+
+def codex_quota_reasons(executable):
+    """Block only when the quota is confirmed exhausted; a failed or unclear query never blocks."""
+    state, value = codex_quota_status(executable)
+    return [f"ChatGPT 額度已用完，重設時間 {local_time(value)}"] if state == "exhausted" else []
+
+
+def codex_reasons(executable):
+    return codex_login_reasons(executable) or codex_quota_reasons(executable)
+
+
+LOGIN_CHECKS = {"claude-print": claude_login_reasons, "codex-exec": codex_reasons}
 
 
 def login_reasons(adapter, executable):

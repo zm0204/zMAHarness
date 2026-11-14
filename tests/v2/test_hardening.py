@@ -419,5 +419,119 @@ class LoginStatusTests(Scratch):
         self.assertNotIn("login", set(report))
 
 
+# The real account/rateLimits/read reply shape from codex-cli 0.169.0 (identifiers removed).
+EXHAUSTED = {"id": 2, "result": {
+    "ordinaryUsageAllowed": False,
+    "rateLimits": {"limitId": "codex", "primary": {"usedPercent": 100, "windowDurationMins": 300,
+                                                  "resetsAt": 1794684431},
+                   "secondary": {"usedPercent": 16, "windowDurationMins": 10080, "resetsAt": 1795271231},
+                   "planType": "plus", "rateLimitReachedType": "rate_limit_reached"},
+    "rateLimitUpsell": {"reset_at": 1794684431},
+}}
+QUOTA_STAND_IN = r"""
+import json, sys
+log, mode = sys.argv[1], sys.argv[2]
+seen = []
+for raw in sys.stdin:
+    message = json.loads(raw)
+    seen.append(message.get("method"))
+    open(log, "w").write(json.dumps({"methods": seen, "argv": sys.argv[3:]}))
+    if mode == "silent":
+        continue
+    if message.get("id") == 1:
+        print(json.dumps({"id": 1, "result": {}}), flush=True)
+    if message.get("id") == 2:
+        print(json.dumps({"method": "account/rateLimits/updated", "params": {}}), flush=True)
+        print(sys.argv[3] if mode == "garbled" else json.dumps({"id": 2, "result": {
+            "ordinaryUsageAllowed": mode == "available"}}), flush=True)
+"""
+
+
+class CodexQuotaTests(Scratch):
+    def stand_in(self, mode):
+        log = self.root / f"quota-{mode}.json"
+        real = subprocess.Popen
+
+        def launch(argv, **kwargs):
+            self.assertEqual([str(part) for part in argv][1:], ["app-server"])
+            self.assertFalse(any(key.upper().startswith("OPENAI_") for key in kwargs["env"]))
+            self.assertFalse(kwargs["shell"])
+            return real([sys.executable, "-I", "-B", "-c", QUOTA_STAND_IN, str(log), mode, "not json"], **kwargs)
+
+        return log, patch("mah.login_status.subprocess.Popen", side_effect=launch)
+
+    def test_quota_query_sends_only_the_read_only_messages(self):
+        self.environment(OPENAI_API_KEY="sk-should-not-pass")
+        for mode, expected in (("available", ("available", None)), ("exhausted", ("exhausted", None))):
+            log, launched = self.stand_in(mode)
+            with self.subTest(mode=mode), launched:
+                self.assertEqual(login_status.codex_quota_status(Path("codex.exe"), timeout=10), expected)
+                self.assertEqual(json.loads(log.read_text())["methods"],
+                                 ["initialize", "initialized", "account/rateLimits/read"])
+
+    def test_failed_or_unclear_quota_query_never_blocks(self):
+        for mode, timeout in (("silent", 1), ("garbled", 10)):
+            _, launched = self.stand_in(mode)
+            with self.subTest(mode=mode), launched:
+                state, _ = login_status.codex_quota_status(Path("codex.exe"), timeout=timeout)
+                self.assertEqual(state, "unknown")
+        with patch("mah.login_status.subprocess.Popen", side_effect=OSError("missing")):
+            self.assertEqual(login_status.codex_quota_status(Path("codex.exe")), ("unknown", "無法查詢"))
+            self.assertEqual(login_status.codex_quota_reasons(Path("codex.exe")), [])
+        for reply in (None, {"id": 2, "error": {"code": -1}}, {"id": 2, "result": []},
+                      {"id": 2, "result": {"ordinaryUsageAllowed": "no"}}, {"id": 2, "result": {}}):
+            with self.subTest(reply=reply), patch("mah.login_status._quota_reply", return_value=reply):
+                self.assertEqual(login_status.codex_quota_status(Path("codex.exe"))[0], "unknown")
+                self.assertEqual(login_status.codex_quota_reasons(Path("codex.exe")), [])
+
+    def test_confirmed_exhaustion_names_the_local_reset_time(self):
+        with patch("mah.login_status._quota_reply", return_value=EXHAUSTED):
+            self.assertEqual(login_status.codex_quota_status(Path("codex.exe")), ("exhausted", 1794684431))
+            reason, = login_status.codex_quota_reasons(Path("codex.exe"))
+        expected = datetime.fromtimestamp(1794684431, UTC).astimezone().strftime("%Y-%m-%d %H:%M（UTC%z）")
+        self.assertEqual(reason, f"ChatGPT 額度已用完，重設時間 {expected}")
+        no_time = {"id": 2, "result": {"ordinaryUsageAllowed": False}}
+        with patch("mah.login_status._quota_reply", return_value=no_time):
+            self.assertEqual(login_status.codex_quota_reasons(Path("codex.exe")), ["ChatGPT 額度已用完，重設時間 未知"])
+        with patch("mah.login_status._quota_reply", return_value={"id": 2, "result": {"ordinaryUsageAllowed": True}}):
+            self.assertEqual(login_status.codex_quota_reasons(Path("codex.exe")), [])
+
+    def test_quota_is_read_only_after_a_subscription_login(self):
+        logged_out = completed(1, stderr=b"Not logged in\n")
+        with patch("mah.login_status._status", return_value=logged_out), \
+                patch("mah.login_status._quota_reply") as quota:
+            self.assertIn("尚未登入", login_status.codex_reasons(Path("codex.exe"))[0])
+        quota.assert_not_called()
+        # No code path may consume a rate-limit reset credit.
+        for source in (ROOT / "mah").rglob("*.py"):
+            text = source.read_text(encoding="utf-8")
+            self.assertNotIn("rateLimitResetCredit", text, source)
+            self.assertNotIn("reset_usage", text, source)
+
+    @unittest.skipUnless(os.name == "nt", "codex must resolve to a native .exe on Windows")
+    def test_preflight_report_carries_quota_reason_without_new_fields(self):
+        repo = git_repo(self.root / "repo", {"a.txt": "a\n"})
+        native = self.root / "bin" / "codex.exe"
+        native.parent.mkdir()
+        native.write_bytes(b"stand-in; the status calls are patched")
+        config = self.root / "harness.local.toml"
+        config.write_text(f'[adapters]\nenabled = ["codex-exec"]\ncodex_command = {json.dumps(str(native))}\n',
+                          encoding="utf-8")
+        signed_in = completed(0, stderr=b"Logged in using ChatGPT\n")
+        with patch("mah.login_status._status", return_value=signed_in), \
+                patch("mah.login_status._quota_reply", return_value=EXHAUSTED):
+            report = preflight(repo, "codex-exec", config)
+        self.assertFalse(report["ok"])
+        reason, = report["reasons"]
+        self.assertTrue(reason.startswith("ChatGPT 額度已用完，重設時間 "))
+        self.assertEqual(set(report), {"repo_root", "config_path", "config_found", "adapter", "adapter_enabled",
+                                       "adapter_executable_found", "sandbox_redirect_detected",
+                                       "needs_unsandboxed_dispatch", "ok", "reasons"})
+        for reply in (None, {"id": 2, "result": {"ordinaryUsageAllowed": True}}):
+            with self.subTest(reply=reply), patch("mah.login_status._status", return_value=signed_in), \
+                    patch("mah.login_status._quota_reply", return_value=reply):
+                self.assertEqual(preflight(repo, "codex-exec", config)["reasons"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

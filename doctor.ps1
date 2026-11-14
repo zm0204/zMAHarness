@@ -289,9 +289,9 @@ if ($python -and -not $pathsFailed) {
     }
     catch { Report-Check '需人工驗證' 'claude-print' $_.Exception.Message }
 
-    # codex-exec 查設定與執行檔位置，並只執行 codex --version（不連網、不推論）顯示 cli_version。
+    # codex-exec 查設定與執行檔位置，執行 codex --version 顯示 cli_version，並以 account/rateLimits/read 唯讀查詢 ChatGPT 額度（不推論）。
     try {
-        $codexQuery = 'import json, subprocess, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; from mah.adapters.codex_exec import codex_environment; c = load_config(None); e = executable_lookup(''codex-exec'')(c); v = subprocess.run([str(e), ''--version''], stdin=subprocess.DEVNULL, capture_output=True, env=codex_environment(), timeout=20).stdout.decode(''utf-8'', ''replace'').strip() if e else None; print(json.dumps({''found'': e is not None, ''enabled'': adapter_enabled(c, ''codex-exec''), ''version'': v or None}))'
+        $codexQuery = 'import json, subprocess, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; from mah.adapters.codex_exec import codex_environment; from mah import login_status; c = load_config(None); e = executable_lookup(''codex-exec'')(c); v = subprocess.run([str(e), ''--version''], stdin=subprocess.DEVNULL, capture_output=True, env=codex_environment(), timeout=20).stdout.decode(''utf-8'', ''replace'').strip() if e else None; q = login_status.codex_quota_status(e) if e else (''unknown'', ''未找到執行檔''); d = login_status.local_time(q[1]) if q[0] == ''exhausted'' else q[1]; print(json.dumps({''found'': e is not None, ''enabled'': adapter_enabled(c, ''codex-exec''), ''version'': v or None, ''quota'': q[0], ''quota_detail'': d}))'
         $codexRaw = & (Get-HarnessPathPython) -I -B -c $codexQuery $PSScriptRoot
         if ($LASTEXITCODE -ne 0) { throw '無法檢查 codex-exec。' }
         $codex = ($codexRaw -join "`n") | ConvertFrom-Json
@@ -303,6 +303,13 @@ if ($python -and -not $pathsFailed) {
             Report-Check '需人工驗證' 'codex-exec' "已找到 codex 原生執行檔（$codexVersion），但 codex-exec 不在 adapters.enabled。要使用 GPT Worker，請在本機 TOML 的 adapters.enabled 加入 `"codex-exec`"。"
         }
         else { Report-Check '通過' 'codex-exec' "已啟用，並找到 codex 原生執行檔（$codexVersion）。" }
+        if ($codex.found) {
+            switch ($codex.quota) {
+                'available' { Report-Check '通過' 'ChatGPT 額度' '可用。codex-exec 與 Codex Desktop 共用同一份額度。' }
+                'exhausted' { Report-Check '需人工驗證' 'ChatGPT 額度' "已用完，重設時間 $($codex.quota_detail)。codex-exec 與 Codex Desktop 共用同一份額度，出卡前檢查會先擋下。" }
+                default { Report-Check '需人工驗證' 'ChatGPT 額度' "無法確認（$($codex.quota_detail)）；不影響出卡前檢查。" }
+            }
+        }
     }
     catch { Report-Check '需人工驗證' 'codex-exec' $_.Exception.Message }
 }

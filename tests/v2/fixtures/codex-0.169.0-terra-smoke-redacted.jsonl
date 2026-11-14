@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000003"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"我會檢查提供的內容，並確認各項操作是否可用。"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"blocked_reason\":null,\"open_questions\":[],\"run_id\":\"codex-00000000000000000000000000000000\",\"schema_version\":\"2.0\",\"status\":\"completed\",\"summary\":\"isolation test|61ef33f2a8184420ae943c00df0a9d28|whoami=failed|outside_read=failed|web_search=failed|apply_patch=failed|exec_read=failed\",\"template\":\"review\",\"template_payload\":{\"findings\":[]}}"}}
+{"type":"turn.completed","usage":{"input_tokens":15517,"cached_input_tokens":7552,"cache_write_input_tokens":0,"output_tokens":204,"reasoning_output_tokens":20}}

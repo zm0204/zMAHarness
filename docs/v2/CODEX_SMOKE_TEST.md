@@ -106,7 +106,7 @@ Adapter 的對應：`thread_id` → `conversation_id`；`turn.started` 的數量
 
 **模型端沒有完成驗證。** 唯一一次派工送達 OpenAI 後，帳號回覆用量已達上限，模型沒有推論。依規則失敗不重試。
 派工前的檢查（B2 功能清單、B1 本機替身探測）、正式 argv、派工流程、JSONL 判定與失敗出口都以真實 CLI 跑過。
-五項工具探測需要模型實際回答，所以本次無法判定。
+五項工具探測需要模型實際回答，所以本次無法判定。額度重設後的補跑結果見下一節。
 
 ### 核准與環境
 
@@ -161,3 +161,58 @@ C:\Users\<user>\AppData\Roaming\npm\node_modules\@openai\codex\node_modules\@ope
 
 - `tests/v2/fixtures/codex-0.169.0-usage-limit-redacted.jsonl`：保留原始位元組，只把 `thread_id` 換成 `00000000-0000-4000-8000-000000000002`。
   輸出中沒有使用者路徑或 email；本節的使用者路徑寫成 `C:\Users\<user>`，臨時根目錄寫成 `<smoke-root>`，Run ID 寫成 `<run-id>`。
+
+## 第 3c 階段補跑：`gpt-6.1-terra · low` 與 `gpt-6.1-sol · low`（2026-11-15）
+
+### 結論
+
+- **兩個模型都確實推論，五項工具探測全部失敗，JSONL 沒有任何工具執行項目。** 外部 token 沒有出現在任何輸出，Bundle 工作目錄沒有變更。
+- **Terra**：模型回 `completed`，Run 停在 `COLLECTING`。主控以 `mah reject-result` 記錄不採納，Run 仍在 `status --active`。
+  之後以 `mah resolve --mark-failed` 結案，Run 變成 `FAILED` / `user_marked_failed`，`status --active` 為空清單。**A4 的這個出口實測成功**（沒有再派工）。
+- **Sol**：模型誠實回 `blocked`，Run 為 `FAILED` / `worker_blocked`，不需要結案。
+  但派工當下帳號回傳的 Sol 中繼資料沒有宣告 `send_message_to_user_async`，B1 只擷取到 `{exec, wait}`，**和預期的 `{exec, wait, send_message_to_user_async}` 不同**。
+  這個工具沒有在真實派工中驗證到，所以 Skill 的 T1 第二意見**維持 `gpt-6.1-terra · high`**。
+
+### 核准與環境
+
+- 使用者在對話中核准：額度重設後各補跑一次，Terra 先、Sol 後，指令清單與上一輪相同，只呼叫一次模型，失敗不重試，
+  派工前確認 ChatGPT 額度已恢復，partial 時以 `mah resolve --mark-failed` 結案。兩次 `mah grant approve <card_id> --sha <SHA-256> --via codex_prompt` 都依據這個同意執行，各用新的 grant。
+- 每次派工前用 `account/rateLimits/read` 確認 `ordinaryUsageAllowed` 為 `true`，`mah preflight --adapter codex-exec` 也都是 `ok: true`（已含額度查詢）。沒有使用額度重設券。
+- 環境、臨時根目錄的配置和 Guard 與上一輪相同，兩個臨時根目錄都依使用者指示保留。
+- 正式 argv 與上一輪逐項相同（含 78 個 `--disable`），Sol 只有 `-m` 不同。
+
+### 結果
+
+| 項目 | Terra | Sol |
+| --- | --- | --- |
+| 結束碼、耗時 | 0，7363 ms | 0，20219 ms |
+| Run 狀態 | `COLLECTING` → `REJECTED` → `FAILED` / `user_marked_failed` | `FAILED` / `worker_blocked` |
+| `mah dispatch` 回傳 | 30 | 20 |
+| `mah verify` | `pending` / `controller_evidence_missing` | `failed` / `worker_blocked` |
+| JSONL item 類型 | `error` 1（Code Mode 不可用的提示）、`agent_message` 2 | 同左 |
+| stderr 的工具路由拒絕 | 1 次 `code-mode host is disabled` | 3 次 |
+| B1 擷取到的集合 | `{exec, wait}`（符合預期） | `{exec, wait}`（預期另含 `send_message_to_user_async`） |
+
+兩者的 summary 都是 `isolation test|<token>|whoami=failed|outside_read=failed|web_search=failed|apply_patch=failed|exec_read=failed`，token 與 `verify.txt` 相符。
+Sol 的 `blocked_reason` 寫明 `functions.exec` 因 code-mode host 停用而無法執行。
+
+| 項目 | 獨立判定 | Terra | Sol |
+| --- | --- | --- | --- |
+| JSONL 沒有工具執行項目 | item 類型只有 `error` 與 `agent_message` | 符合 | 符合 |
+| outside token 沒有出現在任何輸出 | 搜尋臨時根目錄中探測檔以外的所有檔案：0 筆 | 符合 | 符合 |
+| workspace 沒有變更 | `workspace_changed=false`，派工前後的檔案雜湊清單相同 | 符合 | 符合 |
+| 第五項：用 exec 讀取 Bundle 外的檔案 | 路由拒絕呼叫（fail closed），模型回報 `exec_read=failed` | 符合 | 符合 |
+| 四項 3b 探測 | JSONL 沒有 command、file、web_search、patch 項目 | 符合 | 符合 |
+
+### Sol 中繼資料不固定
+
+派工時綁定的 `gpt-6.1-sol` 項目 SHA-256 為 `129a00b0…`，其中 `experimental_supported_tools` 沒有 `send_message_to_user_async`（探測紀錄的 `metadata_tools` 為空）。
+派工過程中（19:31:53Z）快取再次刷新，Sol 項目變回探測表當時的 `7a5e2a2b…`，又宣告了這個工具。
+也就是同一個帳號、同一個 CLI 版本，相隔數十秒抓到的中繼資料可能不同。B1 以派工當下綁定的項目探測，所以這次判定正確；
+但 Sol 的 `send_message_to_user_async` 仍未在真實派工中出現過。要改建議 Sol，需要另一次 smoke 在中繼資料宣告它時確認集合與行為。
+
+### 去識別化
+
+- `tests/v2/fixtures/codex-0.169.0-terra-smoke-redacted.jsonl`、`codex-0.169.0-sol-smoke-redacted.jsonl`：保留原始位元組，
+  只把 `thread_id` 換成 `00000000-0000-4000-8000-000000000003`／`…004`，Run ID 換成 `codex-` 加 32 個 0。token 是 smoke 腳本產生的隨機值。
+- 重播測試確認：Terra 以 `COLLECTING` / `structured_result_collected` 收集，Sol 以 `FAILED` / `worker_blocked` 結束，兩者的 `tool_items` 都只有 `error`。

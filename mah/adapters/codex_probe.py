@@ -39,13 +39,34 @@ FEATURE_NAME = r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*"
 FEATURE_ROW = re.compile(rf"({FEATURE_NAME})\s+(under development|experimental|stable|deprecated|removed)\s+(true|false)")
 WRAPPERS = {"functions.exec", "functions.wait"}
 WRAPPER_KINDS = {"exec": "custom", "wait": "function"}
+# Tools a model's own metadata can add, allowed only when that model's experimental_supported_tools
+# lists them (spec_plan.rs#L1399-L1407 registers them from metadata, past any --disable).
+# send_message_to_user_async: the handler only emits an AgentMessage item and returns
+# {"accepted":true} (no file, process or network). Its control-tool telemetry carries metadata only.
+# On this item's path the only extension hook overriding on_item_completed is the goal extension,
+# gated by the Goals feature (always disabled here) and limited to in-memory turn accounting.
+EXPLAINED_TOOLS = {
+    "functions.send_message_to_user_async": {
+        "kind": "function", "metadata": "send_message_to_user_async",
+        "sources": [
+            UPSTREAM + "core/src/tools/handlers/send_message_to_user_async.rs#L59-L103",
+            UPSTREAM + "core/src/tools/control_tool_analytics.rs#L29-L58",
+            UPSTREAM + "core/src/session/mod.rs#L3102-L3145",
+            UPSTREAM + "app-server/src/extensions.rs#L52-L142",
+            UPSTREAM + "ext/extension-api/src/contributors.rs#L249-L270",
+            UPSTREAM + "ext/goal/src/extension.rs#L297-L312",
+            UPSTREAM + "ext/goal/src/accounting.rs#L175-L215",
+        ],
+    },
+}
+CHILD_KINDS = {**WRAPPER_KINDS, **{name.split(".", 1)[1]: spec["kind"] for name, spec in EXPLAINED_TOOLS.items()}}
 FEATURES_TIMEOUT = 15
 PROBE_TIMEOUT = 25
 MODEL_REFRESH_TIMEOUT = 30
 MODEL_CACHE_FILE = "models_cache.json"
 PROBE_KEY_ENV = "ZMAH_CODEX_PROBE_KEY"
 PROBE_STDIN = b"Local protocol probe using synthetic data. Reply with OK. Do not call tools."
-PROBE_REVISION = 1
+PROBE_REVISION = 2
 # The CLI keeps its model cache only when client_version equals its own package version.
 # https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/models-manager/src/manager.rs#L1006-L1057
 CLI_VERSION = re.compile(r"codex-cli (\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)")
@@ -196,7 +217,22 @@ def verify_no_system_overrides():
             refuse("system Codex configuration may override the model provider or catalog")
 
 
-def declared_tools(request, model, host_enabled, disable_in_process_fallback):
+def metadata_tools(entry):
+    tools = entry.get("experimental_supported_tools", [])
+    if not isinstance(tools, list) or any(not isinstance(tool, str) for tool in tools):
+        refuse("model metadata has an unrecognized experimental_supported_tools list")
+    return {name for name, spec in EXPLAINED_TOOLS.items() if spec["metadata"] in tools}
+
+
+def approved_tool_set(names, explained, host_enabled, disable_in_process_fallback):
+    """Empty or exec/wait (backend disabled), plus explained tools the model's metadata declares."""
+    base = set(names) - set(explained)
+    if base and (base != WRAPPERS or host_enabled is not False or disable_in_process_fallback is not False):
+        return False
+    return set(names) - WRAPPERS <= set(explained)
+
+
+def declared_tools(request, model, host_enabled, disable_in_process_fallback, explained=frozenset()):
     if (not isinstance(request, dict) or request.get("model") != model
             or "additional_tools" in request):
         refuse("probe request model is missing or does not match")
@@ -227,19 +263,19 @@ def declared_tools(request, model, host_enabled, disable_in_process_fallback):
                     if not isinstance(function, dict):
                         refuse("unrecognized declaration in functions namespace")
                     child = function.get("name")
-                    if (not isinstance(child, str) or child not in WRAPPER_KINDS
-                            or function.get("type") != WRAPPER_KINDS[child] or "tools" in function):
+                    if (not isinstance(child, str) or child not in CHILD_KINDS
+                            or function.get("type") != CHILD_KINDS[child] or "tools" in function):
                         extra = " " + child if isinstance(child, str) and re.fullmatch(FEATURE_NAME, child) else ""
                         refuse("unexpected declaration in functions namespace" + extra)
                     names.add("functions." + child)
-            elif (isinstance(name, str) and name in WRAPPERS
-                  and kind == WRAPPER_KINDS[name.split(".")[1]] and "tools" not in tool):
+            elif (isinstance(name, str) and (name in WRAPPERS or name in EXPLAINED_TOOLS)
+                  and kind == CHILD_KINDS[name.split(".")[1]] and "tools" not in tool):
                 names.add(name)
             else:
                 refuse("unexpected tool declaration")
     # ThreadManager chooses the disabled provider only when both inputs are false.
     # https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/thread_manager.rs#L674-L684
-    if names and (names != WRAPPERS or host_enabled is not False or disable_in_process_fallback is not False):
+    if not approved_tool_set(names, explained, host_enabled, disable_in_process_fallback):
         refuse("tool set or code-mode backend differs from the approved profile")
     return sorted(names)
 
@@ -345,9 +381,11 @@ def capture_declarations(argv, schema, cache, environment, model, host_enabled, 
     violations = []
     fake_key = token_hex(32)
     try:
-        model_digest = sha256(_bytes(model_entry(strict_json(cache), model))).hexdigest()
+        entry = model_entry(strict_json(cache), model)
+        model_digest = sha256(_bytes(entry)).hexdigest()
     except (KeyError, TypeError, ValueError, RecursionError):
         refuse("probe model metadata is invalid")
+    explained = metadata_tools(entry)
     with TemporaryDirectory(prefix="zmah-codex-tools-") as directory:
         root = Path(directory)
         home, cwd = root / "home", root / "cwd"
@@ -447,7 +485,8 @@ def capture_declarations(argv, schema, cache, environment, model, host_enabled, 
                 or model_requests != [("/v1/models", copied_digest)]):
             refuse("expected a localhost /models fetch followed by one successful inference-shaped request")
         endpoint, request = requests[0]
-        return {"tools": declared_tools(request, model, host_enabled, fallback), "endpoint": endpoint,
+        return {"tools": declared_tools(request, model, host_enabled, fallback, explained),
+                "metadata_tools": sorted(explained), "endpoint": endpoint,
                 "models_endpoint": model_requests[0][0], "copy_sha256": copied_digest,
                 "served_cache_sha256": model_requests[0][1], "model_entry_sha256": model_digest}
 
@@ -464,7 +503,10 @@ def cached_declarations(state, inputs, observe):
     path = directory / f"{key}.json"
 
     def valid_observation(observation):
-        return (observation["tools"] in ([], sorted(WRAPPERS))
+        explained = observation["metadata_tools"]
+        return (isinstance(explained, list) and set(explained) <= EXPLAINED_TOOLS.keys()
+                and isinstance(observation["tools"], list) and observation["tools"] == sorted(observation["tools"])
+                and approved_tool_set(observation["tools"], explained, False, False)
                 and observation["copy_sha256"] == observation["served_cache_sha256"]
                 == inputs["model_metadata_sha256"]
                 and observation["model_entry_sha256"] == inputs["model_entry_sha256"]

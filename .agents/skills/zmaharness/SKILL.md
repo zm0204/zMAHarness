@@ -123,7 +123,8 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 上表前四列是 `agy-print` 的模型 ID；後兩列是 `claude-print` 的寫法，模型用名稱、effort 另用 `--effort` 指定。
 只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
 指定 GPT 模型（例如「用 luna」、「換 gpt-6.1-terra」）時用 `codex-exec`，模型寫完整 ID（`luna` 即 `gpt-6-luna`），
-effort 另用 `--effort`（`low`～`xhigh`）。可用的 GPT 模型以本機 `codex debug models` 為準；原本是 Disposable Worktree 時須先改提 Context-Bundle。
+effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過的 GPT 模型：`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；帳號實際可用的模型仍以本機 `codex debug models` 為準。
+每次派工前都會自動探測工具宣告；新版 CLI 註冊的未知工具會被拒絕。原本是 Disposable Worktree 時須先改提 Context-Bundle。
 
 只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
 只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，

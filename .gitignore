@@ -70,6 +70,8 @@
 !/tests/v2/fixtures/codex-0.154.0-bundle-smoke-redacted.jsonl
 !/tests/v2/fixtures/codex-0.154.0-bundle-smoke-last-message.json
 !/tests/v2/fixtures/codex-0.169.0-usage-limit-redacted.jsonl
+!/tests/v2/fixtures/codex-0.169.0-terra-smoke-redacted.jsonl
+!/tests/v2/fixtures/codex-0.169.0-sol-smoke-redacted.jsonl
 !/docs/v2/CODEX_SMOKE_TEST.md
 !/docs/v2/CLAUDE_SMOKE_TEST.md
 !/mah/preflight.py
