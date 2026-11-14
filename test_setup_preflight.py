@@ -20,7 +20,8 @@ class SetupPreflightTests(unittest.TestCase):
                 shutil.copy2(ROOT / name, checkout / name)
 
             windows = Path(os.environ["SystemRoot"])
-            search = [windows / "System32", windows, windows / "System32/WindowsPowerShell/v1.0"]
+            # C:\Windows can contain py.exe on CI; exclude it to model no usable Python.
+            search = [windows / "System32", windows / "System32/WindowsPowerShell/v1.0"]
             if store_alias:
                 alias_dir = root / "Microsoft" / "WindowsApps"
                 alias_dir.mkdir(parents=True)
