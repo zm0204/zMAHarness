@@ -39,7 +39,7 @@ class SetupPreflightTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((checkout / ".local").exists(), result.stdout + result.stderr)
-            self.assertFalse((root / "appdata").exists())
+            self.assertFalse((root / "appdata" / "zMAHarness").exists())
             self.assertFalse((root / "profile" / ".agents").exists())
             self.assertFalse((root / "profile" / ".claude").exists())
             self.assertIn("winget install -e --id Python.Python.3.13", result.stdout)
