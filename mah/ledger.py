@@ -27,6 +27,9 @@ TERMINAL_STATES = ("SUCCEEDED", "FAILED", "FAILED_PRE_SUBMIT", "CANCELLED", "ABA
 REFUND_STATES = {"CANCELLED", "FAILED_PRE_SUBMIT"}
 PRE_SUBMIT_REASONS = {"auth_missing", "unknown_flag", "model_not_found", "config_parse_error", "process_not_started"}
 AGY_OUTPUT_CONFLICT = "structured_output_conflict"
+DELEGATE_TEMPLATE = "delegate-implement"
+DELEGATE_DEFERRED = ("delegate-implement 屬於延後階段的功能，目前所有 Worker 只做唯讀分析"
+                     "（review、second-opinion、research）")
 TRANSITIONS = {
     "RESERVED": {"PREPARED", "CANCELLED"},
     "PREPARED": {"LAUNCHING", "CANCELLED"},
@@ -149,6 +152,12 @@ def valid_id(pattern, value):
     return isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
+def delegate_deferred(templates, adapters):
+    """True when delegate-implement is requested for any Adapter that is not allowed to run it."""
+    return DELEGATE_TEMPLATE in templates and any(
+        not policy_for(adapter).allows_delegate_implement for adapter in adapters)
+
+
 def expire_grants(db, now):
     db.execute("UPDATE grants SET status = 'EXPIRED' WHERE status = 'ACTIVE' AND expires_at <= ?", (now,))
 
@@ -195,6 +204,8 @@ class GrantLedger:
                 raise LedgerError(14, "Adapter is not enabled in local settings")
             if EFFORT_LEVELS.index(target["effort_max"]) > EFFORT_LEVELS.index(self.limits.max_effort):
                 raise LedgerError(16, "Requested effort exceeds the hard limit")
+        if delegate_deferred(allowed_templates, [target["adapter"] for target in allowed_targets]):
+            raise LedgerError(2, DELEGATE_DEFERRED)
         if type(max_dispatches) is not int or type(ttl_minutes) is not int or min(max_dispatches, ttl_minutes) < 1:
             raise LedgerError(2, "Dispatch limit and duration must be positive integers")
         if max_dispatches > self.limits.max_dispatches or ttl_minutes > self.limits.ttl_minutes:
@@ -258,6 +269,9 @@ class GrantLedger:
                 and compare_digest(digest(card["content_json"]), content_sha256)):
             raise LedgerError(10, "Card hash does not match")
         content = json.loads(card["content_json"])
+        # A card stored before delegate-implement was deferred is refused at approval.
+        if delegate_deferred(content["allowed_templates"], [target["adapter"] for target in content["allowed_targets"]]):
+            raise LedgerError(10, DELEGATE_DEFERRED)
         if BOUND_SCOPE_FIELDS <= content.keys():
             require_bound_workspace(content["workspace_path"], content)
         elif BOUND_SCOPE_FIELDS & content.keys() or any(
@@ -405,6 +419,9 @@ class GrantLedger:
             return LedgerError(12, "Grant has expired or closed")
         templates = json.loads(grant["allowed_templates"])
         targets = json.loads(grant["allowed_targets"])
+        # A Grant approved before delegate-implement was deferred cannot reserve it.
+        if delegate_deferred([template], [adapter]):
+            return LedgerError(10, DELEGATE_DEFERRED)
         if template not in templates or effort not in EFFORT_LEVELS or not any(
             target["adapter"] == adapter and target["model"] == model
             and EFFORT_LEVELS.index(effort) <= EFFORT_LEVELS.index(target["effort_max"])

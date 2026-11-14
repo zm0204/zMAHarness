@@ -8,7 +8,7 @@ from math import isfinite
 import os
 from pathlib import Path
 import re
-from shutil import which
+from ..executable_path import which
 import signal
 import subprocess
 from subprocess import Popen

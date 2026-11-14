@@ -86,3 +86,6 @@
 !/.agents/skills/zmaharness/references/dispatch.md
 !/mah/window_approval.py
 !/tests/v2/test_window_approval.py
+!/mah/executable_path.py
+!/mah/login_status.py
+!/tests/v2/test_hardening.py

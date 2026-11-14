@@ -10,6 +10,7 @@ from .adapters.registry import policy_for
 from .atomic_io import atomic_write
 from .context_bundle import bundle_manifest
 from .db import connect, transaction
+from .executable_path import refuse_inside_roots
 from .ledger import (READ_ONLY_TEMPLATES, BUSY_QUERY, RUN_ID, SHA256, TARGET_ID, TERMINAL_STATES, LedgerError, event,
                      path_identity, require_dispatch_scope, timestamp, valid_id)
 from .process_identity import probe_process
@@ -141,6 +142,10 @@ class RunManager:
         if adapter.manager is not self:
             raise LedgerError(20, "Adapter is bound to a different Run Manager")
         self._directory(run_id)
+        # Before prepare_invocation, whose --version/--help probe already runs the executable.
+        find_executable = getattr(adapter, "find_executable", None)
+        if find_executable is not None:
+            refuse_inside_roots(find_executable(), (repo_root, workspace, worktree_root))
         plan = adapter.prepare_invocation(
             run_id=run_id, repo_root=repo_root, template=template, model=model, effort=effort,
             task=task, workspace=workspace, worktree_root=worktree_root,
@@ -327,6 +332,8 @@ class RunManager:
         state = run["state"]
         summary["resolution_actions"] = {
             "SUBMISSION_UNKNOWN": ["mark_failed", "abandon"], "TIMED_OUT": ["mark_failed"],
+            # From COLLECTING with --reason, unless verify.json already records a verified result.
+            "COLLECTING": ["mark_failed"],
         }.get(state, [])
         if state in ("LAUNCHING", "RUNNING", "SUBMISSION_UNKNOWN", "TIMED_OUT"):
             source = "LAUNCHING" if state == "LAUNCHING" else "RUNNING"
@@ -348,16 +355,43 @@ class RunManager:
             runs = db.execute(BUSY_QUERY.replace("SELECT 1", "SELECT *"), TERMINAL_STATES).fetchall()
             return [self._summary(db, self._reconcile(db, run)) for run in runs]
 
-    def resolve(self, run_id, *, action=None):
+    def _verified_by_report(self, run):
+        """True when verify.json already records a verified decision for the current result."""
+        completion, digest, _ = self._completion(run)
+        try:
+            report = json.loads(_read(self._directory(run["run_id"]) / "verify.json"))
+            return (completion == "verified" and report["run_id"] == run["run_id"]
+                    and report["decision"] == "verified" and report["result_sha256"] == digest)
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
+    def _mark_collecting_failed(self, db, run, reason):
+        if reason is None:
+            raise LedgerError(2, "從 COLLECTING 標記失敗須以 --reason 說明原因")
+        if self._verified_by_report(run):
+            raise LedgerError(30, "This result has already been verified; run mah verify again instead of marking it failed")
+        return self._change(db, run, "FAILED", reason="user_marked_failed",
+                            evidence={"from_state": "COLLECTING", "user_reason": reason})
+
+    def resolve(self, run_id, *, action=None, reason=None):
         with transaction(self.database) as db:
             run = self._run(db, run_id)
             if action not in (None, "mark_failed", "abandon"):
                 raise LedgerError(2, "Attach and redispatch require a verified external adapter")
+            if reason is not None and (action != "mark_failed" or not isinstance(reason, str)
+                                       or not reason.strip() or len(reason) > 500):
+                raise LedgerError(2, "--reason is only for --mark-failed and must be a short nonempty text")
+            # Only a run that was already COLLECTING may be marked failed from there. A result that this
+            # call recovers from SUBMISSION_UNKNOWN or TIMED_OUT still takes priority over a manual failure.
+            was_collecting = run["state"] == "COLLECTING"
             run = self._reconcile(db, run, resume_observation=action is None)
+            if action == "mark_failed" and was_collecting and run["state"] == "COLLECTING":
+                return self._summary(db, self._mark_collecting_failed(db, run, reason))
             if action is not None and run["state"] == "COLLECTING" and self._completion(run)[0] == "verified":
                 return self._summary(db, run)
             if action == "mark_failed" and run["state"] in ("SUBMISSION_UNKNOWN", "TIMED_OUT"):
-                run = self._change(db, run, "FAILED", reason="user_marked_failed")
+                run = self._change(db, run, "FAILED", reason="user_marked_failed",
+                                   evidence={"user_reason": reason} if reason is not None else None)
             elif action == "abandon" and run["state"] == "SUBMISSION_UNKNOWN":
                 run = self._change(db, run, "ABANDONED", reason="user_abandoned")
             elif action is not None:

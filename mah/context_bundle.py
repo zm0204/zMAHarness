@@ -25,6 +25,13 @@ PRIVATE_NAMES = {
     ".aws", ".ssh", ".gnupg", ".codex", ".antigravity", ".netrc", ".npmrc", ".pypirc",
     ".env", ".envrc", "auth.json", "harness.local.toml", "local.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
 }
+# Project AI settings that a Worker CLI would load from its working directory (hooks, MCP servers,
+# environment, instructions). Disposable worktree snapshots leave them out at any depth; Context-Bundle
+# still accepts them, because a bundle carries files as data and never as Worker configuration.
+WORKER_CONFIG_NAMES = {
+    ".claude", "claude.md", "claude.local.md", ".mcp.json", "agents.md", "agents.override.md", ".agents",
+    ".gemini", "gemini.md",
+}
 PRIVATE_NAME = re.compile(r"(?:^|[._-])(?:secrets?|credentials?|api[_-]?keys?|access[_-]?tokens?)(?:[._-]|$)")
 PRIVATE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".kdbx", ".sqlite", ".sqlite3", ".db"}
 SECRET_TEXT = re.compile(
@@ -81,6 +88,11 @@ def _private_path(path):
     parts = path.casefold().split("/")
     return (any(part in PRIVATE_NAMES or part.startswith((".env.", ".env-")) or PRIVATE_NAME.search(part)
                 for part in parts) or Path(path).suffix.casefold() in PRIVATE_SUFFIXES)
+
+
+def _snapshot_excluded(path):
+    """Paths a disposable worktree snapshot never carries: private files and project AI settings."""
+    return _private_path(path) or any(part in WORKER_CONFIG_NAMES for part in path.casefold().split("/"))
 
 
 def _check_private_path(path):
@@ -261,7 +273,7 @@ def _snapshot_paths(repo, head, status):
         code, path = entry[:2], _relative_path(entry[3:].decode("utf-8"))
         if code in {b"DD", b"AU", b"UD", b"UA", b"DU", b"AA", b"UU"}:
             raise LedgerError(20, "Disposable worktree cannot snapshot unresolved Git conflicts")
-        if not _private_path(path) and path.rsplit("/", 1)[-1].casefold() != ".gitignore":
+        if not _snapshot_excluded(path) and path.rsplit("/", 1)[-1].casefold() != ".gitignore":
             changes.setdefault(path, set()).add(code)
     return base, changes
 
@@ -279,7 +291,7 @@ def _snapshot_index_modes(repo):
 
 
 def _copy_worktree_changes(repo, workspace, base, changes):
-    removed = {path for path in base if _private_path(path)}
+    removed = {path for path in base if _snapshot_excluded(path)}
     sources = {}
     for path, codes in changes.items():
         # A staged deletion can have a separate untracked replacement at the same path.
@@ -476,6 +488,9 @@ def prepare_bundle(repo, paths, instructions, output_dir, *, max_bytes):
         os.path.lexists(parent / ".git") for parent in (output_dir, *output_dir.parents)
     ):
         raise LedgerError(20, "Bundle output must stay outside Git worktrees")
+    # Only the last level is created; say so instead of surfacing a bare WinError 3.
+    if not output_dir.parent.is_dir():
+        raise LedgerError(2, f"Bundle 輸出資料夾的上層必須已存在（只會自動建立最後一層）：{output_dir.parent}")
     head = _head(repo)
     selected = _unique_paths(paths)
     with instructions.open("rb") as file:

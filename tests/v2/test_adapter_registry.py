@@ -30,6 +30,8 @@ OLD_NAME_CHECKS = {
     "refunds_unstarted_process": {"agy-print"},
     "gui_submission": {"gui-terra"},
     "template_verified": {"fake", "agy-print"},
+    # New in the hardening phase: delegate-implement is deferred for every Worker Adapter.
+    "allows_delegate_implement": {"fake"},
 }
 
 

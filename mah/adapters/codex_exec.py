@@ -8,7 +8,7 @@ from copy import deepcopy
 import json
 import os
 from pathlib import Path
-from shutil import which
+from ..executable_path import which
 import subprocess
 
 from ..context_bundle import bundle_manifest
@@ -60,6 +60,11 @@ TEMPLATE_REFUSED = ("codex-exec only runs read-only analysis (review, second-opi
 STRICT_UNSUPPORTED = frozenset({"minLength", "maxLength", "pattern", "minimum", "maximum", "minItems", "maxItems",
                                 "format"})
 JSON_TYPES = ((bool, "boolean"), (int, "integer"), (float, "number"), (str, "string"))
+# `codex exec --json` item types that are not tool calls. `error` is a CLI notice (the smoke shows
+# "Code Mode is unavailable"). Tool items in 0.154.0: command_execution, file_change, mcp_tool_call,
+# collab_tool_call, web_search, todo_list.
+NON_TOOL_ITEMS = frozenset({"agent_message", "reasoning", "error"})
+TOOL_ITEM_OBSERVED = "codex_tool_item_observed"
 
 
 def strict_output_schema(schema):
@@ -277,6 +282,10 @@ class CodexExecAdapter(CliWorkerAdapter):
 
     def _classify(self, capture, observed, run, tool_reason):
         state, reason, result = super()._classify(capture, observed, run, tool_reason)
+        # Every Codex tool is disabled, so any other item type (including a future one) means the
+        # read-only profile did not hold and the result cannot be accepted.
+        if state == "COLLECTING" and observed and any(kind not in NON_TOOL_ITEMS for kind in observed["tool_items"]):
+            return "FAILED", TOOL_ITEM_OBSERVED, None
         if result is not None:
             # The last JSONL agent message must carry the same result as the -o file.
             try:

@@ -96,6 +96,7 @@ def parser():
     for action in ("mark_failed", "abandon", "attach", "redispatch"):
         actions.add_argument("--" + action.replace("_", "-"), dest="resolution",
                              action="store_const", const=action)
+    resolve.add_argument("--reason", help="--mark-failed 的原因；從 COLLECTING 標記失敗時必填")
     return root
 
 
@@ -167,7 +168,15 @@ def output(value):
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
 
-def approve(ledger, args):
+MANUAL_APPROVAL_REQUIRED = ("本機設定 approval.mode = \"manual_cli\"：只接受使用者在互動終端親手確認的 "
+                            "--via manual_cli，不接受主控寫入的 codex_prompt")
+
+
+def approve(ledger, args, mode):
+    # Asymmetric: manual_cli mode refuses Controller-recorded consent; the default codex_prompt mode
+    # also accepts manual_cli, which is the stronger, human-typed confirmation.
+    if mode == "manual_cli" and args.via != "manual_cli":
+        raise LedgerError(10, MANUAL_APPROVAL_REQUIRED)
     evidence = None
     if args.via == "manual_cli":
         card = ledger.approval_candidate(args.card_id, args.sha, via=args.via)
@@ -315,7 +324,7 @@ def main(argv=None):
             run = ledger.get_run(args.run_id)
             if run is not None and has_factory(run["adapter"]):
                 create_adapter(run["adapter"], manager, config).collect_saved(args.run_id)
-            output(manager.resolve(args.run_id, action=args.resolution))
+            output(manager.resolve(args.run_id, action=args.resolution, reason=args.reason))
         elif args.group in ("accept", "reject-result"):
             output(manager.record_acceptance(
                 args.run_id, accepted=args.group == "accept", reason=args.reason,
@@ -353,7 +362,7 @@ def main(argv=None):
                 raise LedgerError(2, "找不到派工卡")
             show_card(card)
         elif args.action == "approve":
-            approve(ledger, args)
+            approve(ledger, args, config.values["approval"]["mode"])
         elif args.action == "approve-window":
             from .window_approval import review_window
 

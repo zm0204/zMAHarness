@@ -357,6 +357,29 @@ class ClaudeFixtureTests(WorkerFixture, unittest.TestCase):
         accepted = self.manager.record_acceptance(self.run_id, accepted=True, reason="fixture", adopted=0, total=0)
         self.assertEqual(accepted["acceptance_status"], "ACCEPTED")
 
+    def test_error_envelope_with_uppercase_success_subtype_is_not_success(self):
+        """is_error true with subtype "SUCCESS" must not collide with the internal success value."""
+        import subprocess
+        import sys
+
+        envelope = json.loads(FIXTURE.read_bytes())
+        self.assertEqual((envelope["type"], envelope["subtype"], envelope["is_error"]), ("result", "success", False))
+        modified = self.root / "error-envelope.json"
+        modified.write_bytes(json.dumps(envelope | {"is_error": True, "subtype": "SUCCESS"}).encode())
+        self.assertEqual(ClaudePrintAdapter(None).normalize_stdout(modified.read_bytes())["raw_status"],
+                         "CLAUDE:SUCCESS")
+
+        def replay(argv, **kwargs):
+            # Exit code 0, so only the envelope can mark the failure.
+            code = "import sys; sys.stdin.buffer.read(); sys.stdout.buffer.write(open(sys.argv[1], 'rb').read())"
+            return self.real_popen([sys.executable, "-I", "-B", "-c", code, str(modified)], **kwargs)
+
+        view = self.dispatch(bundle=True, popen=replay, run_id=FIXTURE_RUN_ID)
+        self.assertEqual((view["state"], view["state_reason"], view["exit_code"]),
+                         ("FAILED", "worker_status_not_success", 0))
+        self.assertFalse((self.directory() / "result.json").exists())
+        self.assertFalse((self.directory() / "DONE").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

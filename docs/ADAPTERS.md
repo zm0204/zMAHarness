@@ -12,13 +12,15 @@
 | --- | --- |
 | `id` | Adapter 名稱，寫入帳本 `runs.adapter` 與卡片目標，必須與註冊名稱相同。 |
 | `manager` | 綁定的 `RunManager`。`dispatch` 會拒絕綁定其他 Manager 的實例。 |
-| `prepare_invocation(...)` | 在預留 Grant 之前驗證輸入，建立固定的啟動計畫，不得啟動任何程序或請求。回傳物件須提供 `workspace_kind`、`cwd`、`timeout_s`。拒絕時丟出 `LedgerError`。 |
+| `prepare_invocation(...)` | 在預留 Grant 之前驗證輸入，建立固定的啟動計畫。不得啟動 Worker 的工作程序或送出模型請求，但可以為了確認能力執行 Worker 的探測指令：`CliWorkerAdapter` 與 `agy-print` 會在這裡執行 `--version` 與 `--help`（`codex-exec` 是 `--version` 與 `exec --help`）。回傳物件須提供 `workspace_kind`、`cwd`、`timeout_s`。拒絕時丟出 `LedgerError`。 |
 | `launch(plan)` | 先呼叫 `manager.claim_launch(run_id, invocation=...)`，再啟動 Worker 一次。這是唯一可以啟動 Worker 的地方。 |
 | `observe(handle)` | 等待 Worker 結束或達到核准期限，回傳觀測結果，不得發布結果。 |
 | `persist_capture(handle, capture)` | 把觀測結果封存到 Run 目錄，讓復原時不必重新啟動。 |
 | `collect_saved(run_id, **options)` | 只讀取已封存的觀測，推進 Run 狀態並回傳摘要。不得啟動 Worker。CLI 的 `resolve` 與 `collect` 也會呼叫它。 |
 
 另外提供一個工廠函式 `factory(manager, config) -> Adapter`，從本機設定建立實例。例如 `AgyPrintAdapter.from_config` 會在這裡解析 `agy_command` 的路徑。
+
+**執行檔解析。** 以名稱查找 Worker 執行檔時，請用 [`mah/executable_path.py`](../mah/executable_path.py) 的 `which`，不要用 `shutil.which`：Windows 上的 `shutil.which` 會先搜尋目前目錄，目標專案放一個同名 `.exe` 就會被當成 Worker 執行。`which` 只走 PATH 的絕對路徑項目，略過 `.`、相對路徑與目前目錄。Adapter 若提供 `find_executable()`，`RunManager.dispatch` 會在呼叫 `prepare_invocation`（也就是探測）之前確認解析結果不在 `repo_root`、工作目錄或 `worktree_root` 內，否則以結束碼 14 拒絕；`mah preflight` 也做同樣的檢查。
 
 ## 2. 填寫 AdapterPolicy
 
@@ -35,6 +37,7 @@
 | `gui_submission` | GUI 型 Adapter：LAUNCHING 的 Run 可憑 `gui_not_submitted` 取消。 |
 | `template_verified` | 只能由模板 Verifier 判定成功；採納總數須與已驗證結果相符。 |
 | `run_id_prefix` | CLI 產生 Run ID 的前綴，格式為 `<prefix>-<uuid4 hex>`。 |
+| `allows_delegate_implement` | `delegate-implement` 是延後階段的功能。沒有這個旗標的 Adapter，卡片建立（結束碼 2）、核准與預留（結束碼 10）都會拒絕；目前只有內部測試替身 `fake` 設定它。 |
 
 ## 3. 註冊
 
@@ -74,7 +77,10 @@
 Codex 只能透過 shell 或 code mode 工具讀檔，而 `-s read-only` 的讀取範圍是整台電腦，無法綁在 Disposable Worktree 內。
 
 - Disposable Worktree 與非唯讀模板一律在預留 Grant 之前以結束碼 17 拒絕。預設設定 `defaults.delegate_implement.adapter` 雖然仍是
-  `codex-exec`，實際以 `codex-exec` 派 delegate-implement 會得到 17，訊息說明它只執行唯讀分析、所有工具都已停用。
+  `codex-exec`，delegate-implement 卡片在建立時就以結束碼 2 拒絕（延後階段的功能，所有 Worker 都一樣）。
+- 執行期間 JSONL 只要出現 `agent_message`、`reasoning`、`error` 以外的 item（0.154.0 的工具類有 `command_execution`、`file_change`、
+  `mcp_tool_call`、`collab_tool_call`、`web_search`、`todo_list`，也包括日後新增的類型），結果一律判為 `FAILED`，原因 `codex_tool_item_observed`，
+  不寫出 `result.json` 與 `DONE`；收據的 `observation.tool_items` 記錄實際類型。`error` 是 CLI 的提示（smoke 中為 Code Mode 不可用），不算工具。
 - 結構化結果以 `-o` 寫出的 last message 檔為準，並必須與 JSONL 最後一則 agent message 一致；`--output-schema` 由共用的
   `_response_schema` 以程式轉換成嚴格相容版（移除 `minLength` 等關鍵字、`const` 改成單值 `enum`），Verifier 仍以完整模板規則驗收。
 - 殘餘風險：`apply_patch` 工具沒有可關閉的設定，以 `-s read-only`、空的 Bundle 目錄與 `approval_policy="never"` 圍堵。
@@ -108,3 +114,12 @@ Codex 只能透過 shell 或 code mode 工具讀檔，而 `-s read-only` 的讀�
 - **agy 搬到共用基底。** `cli_worker.py` 是從 `AgyPrintAdapter` 移植並參數化的；為了不影響已通過真實驗收的 agy，這一階段沒有改 `agy_print.py`，所以兩者暫時有一份刻意保留的重複。等 `codex-exec` 也用同一個基底並通過真實驗收後，另開一個純重構階段，把 agy 搬到基底上，以 agy 現有的測試當護欄。
 - **退款證據通用化。** 屆時把帳本退款判斷裡 agy 專屬的 `agy_capture_sha256` 通用化成 `capture_sha256`（基底已使用這個名稱），`claude-print` 就可以開啟 `refunds_unstarted_process`，讓確定沒啟動的程序退回 Grant。
 - **帳本欄位與暫存檔。** CLI Worker 的帳本 `runs.model_observed`、`runs.cli_version` 目前為 null（實際值記在收據的 `observation` 與 `cli_version`），Run 目錄也會留下 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`。這兩項延到「agy 搬上共用基底」的重構階段一起處理。
+
+### 開源前修補階段延後的待辦
+
+- **從 `.pending` 補封存的復原路徑。** 程序收據封存前若中斷，目前只留下 `.pending` 串流，需要一條從它們補封存、但不重新啟動 Worker 的復原路徑。
+- **終止整個 Worker 程序樹。** 逾時或主控程序結束時，目前只終止 Worker 本身；改用 Windows Job Object，讓子程序一併結束。
+- **清理指令。** 實作 Disposable Worktree 登記（`git worktree`）、快照提交與 Run 目錄的清理指令，並接上 `privacy.retain_run_dirs_days`（目前尚未實作，不會自動清理）。
+- **卡片綁定快照 HEAD。** Disposable Worktree 卡片改為同時綁定快照提交的 HEAD，而不只綁定工作目錄身分與任務 SHA-256。
+- **帳本 `model_observed`、`cli_version` 寫入與 `.pending` 殘留**：同上一項，排在 agy 搬上共用基底的重構階段。
+- **收據雜湊鏈沒有金鑰。** 屬於同一 Windows 帳號下的已知限制，見 [DISCLAIMER.md](../DISCLAIMER.md)。

@@ -15,6 +15,8 @@ agy_command = "agy"
 claude_command = "claude"
 
 [approval]
+# codex_prompt：主控寫入對話中的同意（也接受 manual_cli）。
+# manual_cli：每張卡都須在互動終端機親手確認，主控寫入的 codex_prompt 一律拒絕。
 mode = "codex_prompt"
 grant_ttl_minutes = 240
 
@@ -49,4 +51,5 @@ allowed_command_prefixes = ["pytest", "npm test", "npm run test", "dotnet test"]
 timeout_s = 900
 
 [privacy]
+# 尚未實作：目前不會自動清理。請手動刪除 state/runs 與 worktrees 底下不再需要的舊資料。
 retain_run_dirs_days = 30

@@ -24,7 +24,7 @@ ADAPTER_POLICIES = {
         template_verified=True, run_id_prefix="claude",
     ),
     # Internal test double only; not accepted in the local TOML.
-    "fake": AdapterPolicy(window_approval=True, template_verified=True),
+    "fake": AdapterPolicy(window_approval=True, template_verified=True, allows_delegate_implement=True),
 }
 
 

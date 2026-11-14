@@ -7,7 +7,9 @@ from tempfile import mkstemp
 from .adapters.registry import executable_lookup, executable_missing_reason
 from .config import HOME_VARIABLE, ConfigError, adapter_enabled, default_config_path, load_config, \
     sandbox_redirect_detected
+from .executable_path import EXECUTABLE_INSIDE_PROJECT, inside_roots
 from .ledger import LedgerError
+from .login_status import login_reasons
 
 UNSANDBOXED_DISPATCH_REQUIRED = (
     "派工必須在沙盒外執行：目前環境無法寫入 zMAHarness 狀態目錄或啟動 Worker。"
@@ -52,7 +54,11 @@ def git_toplevel(path):
 
 
 def preflight(repo, adapter, config_path=None):
-    """Read-only: no file writes, no network, no quota query and no ledger. Returns the report."""
+    """No ledger, no quota query and no writes under zMAHarness or the project. Returns the report.
+
+    For claude-print and codex-exec it runs the CLI's own login status command (no inference request);
+    that CLI may refresh files in its own home folder.
+    """
     reasons = []
     repo_root, git_reason = git_toplevel(repo)
     if git_reason is not None:
@@ -79,9 +85,16 @@ def preflight(repo, adapter, config_path=None):
 
     # None: not applicable (no executable lookup registered) or unknown (settings did not load).
     lookup = executable_lookup(adapter)
-    executable_found = None if lookup is None or config is None else lookup(config) is not None
+    executable = None if lookup is None or config is None else lookup(config)
+    executable_found = None if lookup is None or config is None else executable is not None
     if executable_found is False:
         reasons.append(executable_missing_reason(adapter) or f"找不到 {adapter} 的 Worker 執行檔，請安裝或檢查本機設定。")
+    elif executable is not None:
+        roots = (repo_root, config.values["paths"]["worktree_root"])
+        if inside_roots(executable, roots):
+            reasons.append(EXECUTABLE_INSIDE_PROJECT.format(path=Path(executable).resolve()))
+        else:
+            reasons.extend(login_reasons(adapter, executable))
 
     redirected = sandbox_redirect_detected()
     return {

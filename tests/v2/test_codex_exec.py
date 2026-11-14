@@ -16,8 +16,8 @@ from mah.adapters import registry
 from mah.adapters.agy_print import _response_schema
 from mah.adapters.base import Adapter, AdapterPolicy
 from mah.adapters.codex_exec import (DISABLED_FEATURES, FIXED_CONFIG, LAST_MESSAGE_FILE, MISSING_EXECUTABLE,
-                                     SCHEMA_FILE, STRICT_UNSUPPORTED, CodexExecAdapter, codex_environment,
-                                     resolve_codex_executable, strict_output_schema)
+                                     SCHEMA_FILE, STRICT_UNSUPPORTED, TOOL_ITEM_OBSERVED, CodexExecAdapter,
+                                     codex_environment, resolve_codex_executable, strict_output_schema)
 from mah.ledger import LedgerError
 from mah.verifier import VerificationEvidence, Verifier
 
@@ -380,6 +380,52 @@ class CodexFixtureTests(WorkerFixture, unittest.TestCase):
                                                          view["result_sha256"]))
         # The Worker honestly answered "partial", so the Verifier keeps it pending.
         self.assertEqual(self.verify()["verification"]["reason"], "result_partial")
+
+    def test_any_tool_item_makes_the_result_unacceptable(self):
+        """The smoke replay with one tool item added fails, and neither result.json nor DONE is written."""
+        events = FIXTURE_JSONL.read_bytes().splitlines(keepends=True)
+        tool = b'{"type":"item.completed","item":{"id":"item_9","type":"command_execution","command":"whoami"}}\n'
+        modified = self.root / "with-tool.jsonl"
+        modified.write_bytes(b"".join(events[:3]) + tool + b"".join(events[3:]))
+
+        def replay(argv, **kwargs):
+            code = ("import shutil, sys; sys.stdin.buffer.read(); a = sys.argv[1:]; "
+                    "shutil.copyfile(a[0], a[a.index('-o') + 1]); "
+                    "sys.stdout.buffer.write(open(a[1], 'rb').read())")
+            return self.real_popen([sys.executable, "-I", "-B", "-c", code, str(FIXTURE_LAST), str(modified),
+                                    *argv[1:]], **kwargs)
+
+        view = self.dispatch(bundle=True, popen=replay, run_id=FIXTURE_RUN_ID)
+        self.assertEqual((view["state"], view["state_reason"]), ("FAILED", TOOL_ITEM_OBSERVED))
+        self.assertEqual(view["codex_capture"]["observation"]["tool_items"], ["command_execution", "error"])
+        self.assertFalse((self.directory() / "result.json").exists())
+        self.assertFalse((self.directory() / "DONE").exists())
+
+    def test_error_item_alone_is_not_a_tool(self):
+        from types import SimpleNamespace
+
+        from mah.adapters.cli_worker import CliCapture
+
+        run_id = "codex-" + "a" * 32
+        result = {"schema_version": "2.0", "run_id": run_id, "template": "review", "status": "completed",
+                  "summary": "s", "blocked_reason": None, "open_questions": [], "template_payload": {"findings": []}}
+        adapter = CodexExecAdapter(SimpleNamespace(max_summary_chars=2000))
+        run = {"run_id": run_id, "template": "review", "workspace_kind": "read_only", "conversation_id": None}
+        for kind, expected in (("error", ("COLLECTING", "structured_result_collected")),
+                               ("reasoning", ("COLLECTING", "structured_result_collected")),
+                               *((name, ("FAILED", TOOL_ITEM_OBSERVED)) for name in (
+                                   "command_execution", "file_change", "mcp_tool_call", "collab_tool_call",
+                                   "web_search", "todo_list", "future_tool"))):
+            events = [{"type": "thread.started", "thread_id": "00000000-0000-4000-8000-000000000001"},
+                      {"type": "turn.started"}, {"type": "item.completed", "item": {"id": "i1", "type": kind}},
+                      {"type": "item.completed", "item": {"id": "i2", "type": "agent_message",
+                                                          "text": json.dumps(result)}},
+                      {"type": "turn.completed", "usage": {"input_tokens": 1}}]
+            capture = CliCapture(run_id, "t", "i", "\n".join(json.dumps(item) for item in events).encode(), b"", 0,
+                                 workspace_changed=False, outputs={LAST_MESSAGE_FILE: json.dumps(result).encode()})
+            with self.subTest(kind=kind):
+                self.assertEqual(adapter._classify(capture, adapter.normalize_capture(capture), run, None)[:2],
+                                 expected)
 
 if __name__ == "__main__":
     unittest.main()

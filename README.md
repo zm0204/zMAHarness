@@ -11,8 +11,8 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 - **作業系統**　Windows 11。
 - **主控**　[Codex Desktop](https://openai.com/codex/) 或 [Claude Code](https://code.claude.com/docs/) 二選一。
 - **Worker**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。
-- **Claude Worker（選用）**　以 `npm install -g @anthropic-ai/claude-code` 安裝 Claude Code CLI，再執行 `claude auth login`（或執行 `claude` 依畫面）以 Claude 帳號登入。Worker 使用的是你的 Claude 訂閱，跟你平常使用 Claude 共用同一份 Pro 用量上限。請不要設定 `ANTHROPIC_API_KEY`，否則 CLI 會改用 API 計費；zMAHarness 啟動 Worker 時會移除所有 `ANTHROPIC_` 開頭的變數，但你自己在終端機執行 `claude` 時仍會受影響。zMAHarness 只啟動套件內的原生 `claude.exe`，不經由 npm 的 `claude.cmd` 轉呼。
-- **GPT Worker（選用）**　以 `npm install -g @openai/codex` 安裝 Codex CLI，再執行 `codex login` 以 ChatGPT 帳號登入。Worker 使用你的 ChatGPT 訂閱，跟你平常使用 Codex 共用同一份用量上限。請不要設定 `OPENAI_API_KEY`（或 `CODEX_API_KEY`），否則會改用 API 計費；zMAHarness 啟動 Worker 時會移除所有 `OPENAI_` 開頭的變數，以及 `CODEX_HOME` 以外的 `CODEX_` 變數。`codex-exec` 目前**只支援 Context-Bundle**，並停用 Codex 的所有工具。殘餘風險：Codex 會把你的全域 `AGENTS.md` 注入 Worker，無法以設定關閉；工具全關時影響僅限回答內容，輸出仍受 schema 與 Verifier 約束，Doctor 會提示。zMAHarness 只啟動套件內的原生 `codex.exe`，不經由 npm 的 `codex.cmd` 轉呼。
+- **Claude Worker（選用）**　以 `npm install -g @anthropic-ai/claude-code` 安裝 Claude Code CLI，再執行 `claude auth login`（或執行 `claude` 依畫面）以 Claude 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `ANTHROPIC_` 開頭的變數），出卡前也會以 `claude auth status` 確認 CLI 是以 Claude 訂閱帳號登入；未登入、登入已到期，或使用 API 金鑰、`apiKeyHelper`、第三方供應商時都不出卡。在這兩項檢查下，Worker 會使用你的 Claude 訂閱，跟你平常使用 Claude 共用同一份用量上限；實際計費仍以 Anthropic 的帳號設定為準。你自己在終端機執行 `claude` 時不受這些檢查保護。殘餘風險：使用者層級的 `~/.claude/CLAUDE.md` 與 `~/.claude/settings.json` 裡的 hooks 等使用者設定仍會載入 Worker，無法以參數關閉；請保持這些設定不含會寫檔、連網或改變指示的內容。zMAHarness 只啟動套件內的原生 `claude.exe`，不經由 npm 的 `claude.cmd` 轉呼。
+- **GPT Worker（選用）**　以 `npm install -g @openai/codex` 安裝 Codex CLI，再執行 `codex login` 以 ChatGPT 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `OPENAI_` 開頭的變數，以及 `CODEX_HOME` 以外的 `CODEX_` 變數），出卡前也會以 `codex login status` 確認 CLI 是以 ChatGPT 帳號登入；未登入或以 API 金鑰登入時都不出卡。在這兩項檢查下，Worker 會使用你的 ChatGPT 訂閱，跟你平常使用 Codex 共用同一份用量上限；實際計費仍以 OpenAI 的帳號設定為準。執行期間只要 Worker 的輸出出現任何工具呼叫，該次結果一律判為不可驗收。`codex-exec` 目前**只支援 Context-Bundle**，並停用 Codex 的所有工具。殘餘風險：Codex 會把你的全域 `AGENTS.md` 注入 Worker，無法以設定關閉；工具全關時影響僅限回答內容，輸出仍受 schema 與 Verifier 約束，Doctor 會提示。zMAHarness 只啟動套件內的原生 `codex.exe`，不經由 npm 的 `codex.cmd` 轉呼。
 - **本機工具**　Git、PowerShell 5.1 或 7、Python 3.11 以上。請將要使用的 `python.exe` 加入 PATH，並啟用 Python 使用者套件目錄。
 
 可在一般 PowerShell 終端機執行 `winget install -e --id Python.Python.3.13`，或從 python.org 安裝並勾選 **Add python.exe to PATH**。如果 `python.exe` 指向 `Microsoft\WindowsApps` 且無法執行，那是 Microsoft Store 的假捷徑，不是真的 Python；請到「設定 → 應用程式 → 進階應用程式設定 → 應用程式執行別名」關閉 `python.exe` 和 `python3.exe`，重開終端機後再執行安裝。
@@ -60,23 +60,31 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 
 安裝後，用選定的主控開啟要工作的 Git 專案。Codex Desktop 用 `$zmaharness` 呼叫，Claude Code 用 `/zmaharness`。也可以直接交辦開發工作，符合協作條件時，主控會在對話中顯示 **【zMAHarness 協作建議】**，列出觸發原因、建議模型、任務與範圍、授權限制及協作理由。卡片和回覆使用你提問的語言，品牌、模型 ID 與指令名保留原文。
 
-出卡前，主控會先執行唯讀的 `mah preflight`，確認目標是本機 Git 專案、本機設定存在、Worker 已啟用且找得到執行檔。檢查不通過時不出卡，主控會說明原因並自己繼續原任務。若訊息是「不是 Git 專案」或「無法檢查 Git 專案」，也可能是因為目標不在主控目前的工作資料夾內，或被沙盒限制存取；請在該專案開啟主控後再試。
+出卡前，主控會先執行唯讀的 `mah preflight`，確認目標是本機 Git 專案、本機設定存在、Worker 已啟用且找得到執行檔；Claude 與 GPT Worker 另外確認 CLI 是以訂閱帳號登入。檢查不通過時不出卡，主控會說明原因並自己繼續原任務。若訊息是「不是 Git 專案」或「無法檢查 Git 專案」，也可能是因為目標不在主控目前的工作資料夾內，或被沙盒限制存取；請在該專案開啟主控後再試。
 
 - **不同意**　主控立即自行繼續原任務，同一問題不會反覆詢問。
-- **繼續協作**　可選擇建議模型、備選模型，或手打調整模型、思考程度及縮小檔案範圍。主控依你的選擇準備資料與單次 Grant，派工後獨立驗收並決定是否採納。
+- **繼續協作**　可選擇建議模型、備選模型，或手打調整模型、思考程度及縮小檔案範圍。主控依你的選擇準備資料與 Grant，派工後獨立驗收並決定是否採納。對話核准（`codex_prompt`）每張卡固定 1 次；終端機核准（`manual_cli`）的 Disposable Worktree 卡片最多可到 `limits.max_dispatches_per_grant`，Context-Bundle 卡片在兩種模式都是 1 次。
 
 `python -B -m mah --help` 可在其他專案目錄執行。`--repo` 和派工卡的 `repo_root` 都應指向**目前工作的目標 Git 根目錄**。zMAHarness clone 目錄是 Python 引擎的位置。
 
 | 審查模式 | 適用情況 |
 | --- | --- |
 | **Context-Bundle** | 1～2 個核心檔案能完整封裝在預設 32 KB 的任務上限內。可以審查未提交的完整檔案。 |
-| **Disposable Worktree** | 跨檔、大檔或需要追查關聯檔案。快照納入未提交變更與符合規則的新檔，必要時只在分離 HEAD 上建立本機匿名提交。 |
+| **Disposable Worktree** | 跨檔、大檔或需要追查關聯檔案。快照納入未提交變更與符合規則的新檔，必要時只在分離 HEAD 上建立本機匿名提交。專案的 AI 設定檔（`.claude/`、`CLAUDE.md`、`CLAUDE.local.md`、`.mcp.json`、`AGENTS.md`、`AGENTS.override.md`、`.agents/`、`.gemini/`、`GEMINI.md`，任何層級）不會放進快照，Worker 看不到。 |
 
 兩種模式都會綁定核准範圍並保存收據。驗收成功後仍由主控決定是否採納。遇到送出狀態不明，先查現有收據與結果。Worker 與主控使用同一 Windows 帳號，唯讀限制依賴 CLI 的會話設定，工具行為未獲 OS 層完整驗證。詳見 [協作規範](.agents/skills/zmaharness/SKILL.md) 和 [使用風險](DISCLAIMER.md)。
+
+### 同意的信任模型
+
+- **對話核准（`codex_prompt`，預設）**：你在主控對話中同意後，由主控執行 `mah grant approve --via codex_prompt` 寫入同意紀錄。這筆紀錄是主控寫入的，CLI 只能檢查卡片雜湊、範圍與次數，無法防止不遵守 Skill 的主控自行寫入。
+- **終端機核准（`manual_cli`）**：需要硬性保證時，在本機 TOML 設定 `approval.mode = "manual_cli"`。之後每張卡都必須由你在互動終端機執行 `mah grant approve <card_id> --sha <完整 SHA-256> --via manual_cli`，親手輸入畫面上的確認碼；`--via codex_prompt` 會以結束碼 10 拒絕。預設的 `codex_prompt` 模式兩種方式都接受。
+- `delegate-implement`（讓 Worker 修改程式）屬於延後階段的功能，目前所有 Worker 一律拒絕，只做唯讀分析。
 
 ## 本機設定與故障排除
 
 - **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits，略過派工前後的額度查詢。
+- **舊資料清理**：`privacy.retain_run_dirs_days` 目前尚未實作，不會自動清理。請定期手動刪除設定資料夾內 `stateuns` 與 `worktrees` 底下不再需要的舊資料；Disposable Worktree 請在目標專案以 `git worktree remove <路徑>` 刪除；若已直接刪掉資料夾，再執行 `git worktree prune`。
+- **Worker 執行檔**：zMAHarness 只從 PATH 中的絕對路徑尋找 `claude`、`codex`、`agy`，不使用目前目錄或相對路徑下的同名檔案；解析結果位於目標專案、工作樹或 Bundle 目錄內時一律拒絕（結束碼 14）。
 - **既有安裝**：新設定尚未建立時，`mah` 會退回舊的 `%LOCALAPPDATA%\MultiAgentHarness\harness.local.toml`（若存在）。執行新版初始化後會優先使用新設定。舊 Ledger 與 Run 保留在原處，查詢或收尾舊 Run 時在子命令前指定 `--config <舊設定檔>`。
 - **其他專案找不到 `mah`**：確認該終端與安裝時使用相同的 Python，並啟用 Python 使用者套件目錄。移動 clone 或更換 Python 後請重跑安裝。也可暫時將引擎根目錄加入 `PYTHONPATH`。
 - **找不到 Skill**：重開主控應用程式或建立新對話，再於 Codex Desktop 輸入 `$zmaharness`，或於 Claude Code 輸入 `/zmaharness`。

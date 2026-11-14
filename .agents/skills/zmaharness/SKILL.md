@@ -44,7 +44,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 - 【建議模型】顯示主控 Agent 依本次任務類型、觸發原因及難度選定的模型與 effort。
 - 【任務與範圍】顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
-- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。出卡前檢查的 `needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
+- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。這是對話核准（`codex_prompt`）與 Context-Bundle 的固定次數；本機設定 `approval.mode = "manual_cli"` 時，Disposable Worktree 卡片可到 `limits.max_dispatches_per_grant`，此時顯示實際卡片的次數，並註明「需在終端機親手核准」。出卡前檢查的 `needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
 - 【為什麼建議協作？】用一至兩句白話說明預期收益及選擇該模型的原因。
 
 依提問工具實際提供的欄位排版。下方選項範本定義各選項的意思，依工具能力分配到相應欄位。
@@ -156,6 +156,8 @@ effort 另用 `--effort`（`low`～`xhigh`）。可用的 GPT 模型以本機 `c
 
 選項 1 立即繼續原任務，同一任務不再追問。選項 2 由使用者在介面切換後回覆，再繼續原任務。
 
-`--via codex_prompt` 代表「主控對話內核准」，適用任何主控。
+`--via codex_prompt` 代表「主控對話內核准」，適用任何主控。這筆紀錄由主控寫入，CLI 無法替使用者把關，因此只在使用者明確同意後執行。
+本機設定 `approval.mode = "manual_cli"` 時，主控不得執行 `grant approve`；CLI 會以結束碼 10 拒絕 `codex_prompt`。
+請把完整的 `python -B -m mah grant approve <card_id> --sha <完整 SHA-256> --via manual_cli` 交給使用者在自己的互動終端機執行並親手輸入確認碼，使用者回報完成後再派工。
 收到使用者同意協作的回覆後，才讀取 [references/dispatch.md](references/dispatch.md) 並照著執行。
 拒絕或只選切換主控時不讀取。

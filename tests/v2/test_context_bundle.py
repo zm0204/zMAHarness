@@ -111,6 +111,11 @@ class ContextBundleTests(unittest.TestCase):
         self.assertEqual((self.bundle / "task.md").read_bytes(), task)
 
     def test_worktree_cli_creates_a_clean_linked_detached_head_without_commit(self):
+        # Precondition: a source without project AI settings, so the snapshot has nothing to leave out.
+        # The fixture copies this repository, whose own .agents/ is excluded by WORKER_CONFIG_NAMES.
+        self.git("rm", "-r", "-q", "--", ".agents")
+        self.git("-c", "user.name=Harness Test", "-c", "user.email=harness@example.invalid",
+                 "commit", "-q", "--no-verify", "-m", "fixture without project AI settings")
         run_id = f"review-{uuid4().hex}"
         proc = self.cli("worktree", "create", "--repo", str(self.repo), "--run-id", run_id)
         self.assertEqual(proc.returncode, 0, proc.stderr)

@@ -1,7 +1,7 @@
 """Read-only Claude Worker through the official Claude Code CLI in print mode (`claude -p`)."""
 import os
 from pathlib import Path
-from shutil import which
+from ..executable_path import which
 
 from ..ledger import LedgerError
 from ..run_manager import _bytes
@@ -170,7 +170,9 @@ class ClaudePrintAdapter(CliWorkerAdapter):
         if data.get("type") == "result" and subtype == "success" and data.get("is_error") is False:
             raw_status = "SUCCESS"
         else:
-            raw_status = subtype or ("ERROR" if data.get("type") == "result" else None)
+            # Prefixed so that no failing envelope (for example subtype "SUCCESS" with is_error true)
+            # can equal the internal success value.
+            raw_status = f"CLAUDE:{subtype}" if subtype else ("ERROR" if data.get("type") == "result" else None)
         optional = {"structured_output": data["structured_output"]} if "structured_output" in data else {}
         response = _text(data.get("result"))
         if "result" in data and response is None:

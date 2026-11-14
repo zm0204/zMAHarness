@@ -36,6 +36,9 @@ class AdapterPolicy:
     template_verified: bool = False
     # Prefix for CLI-generated run IDs: "<prefix>-<uuid4 hex>".
     run_id_prefix: str | None = None
+    # delegate-implement is a deferred phase: cards, approvals and reservations refuse it for every
+    # Adapter without this flag. Only the internal test double sets it.
+    allows_delegate_implement: bool = False
 
 
 @runtime_checkable
