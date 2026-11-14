@@ -67,7 +67,7 @@ flowchart TD
 
 ### Phase 0A：V1 原始碼盤點與相容性映射
 
-- **目標：** 完整讀懂 `zm0204/MultiAgentHarness`（commit `b7277e4` 或目前 HEAD）的現有實作，防止重複造輪子或破壞既有介面。
+- **目標：** 完整讀懂 `zm0204/MultiAgentHarness`（commit `3217e8c` 或目前 HEAD）的現有實作，防止重複造輪子或破壞既有介面。
 - **前置依賴：** 無。
 - **具體任務：**
   1. 檢查 `git status`、`git log -n 5`，確認工作樹乾淨且位於預期 commit。

@@ -82,7 +82,7 @@ V1 的程式、測試、SQLite 收據、Run ID、內容雜湊、防重複送出�
 
 ### 2.1 V1 既有基礎（根據 Draft 0.1 的描述，需由 Phase 0A 盤點確認）
 
-- 私有儲存庫 `zm0204/MultiAgentHarness`，家中與學校電腦都有部署紀錄；學校端同步到 `b7277e4`，24／24 項離線測試通過。
+- 私有儲存庫 `zm0204/MultiAgentHarness`，家中與學校電腦都有部署紀錄；學校端同步到 `3217e8c`，24／24 項離線測試通過。
 - Sol → Terra Low Computer Use → Antigravity Gemini Flash → `result.md`／`DONE` → Sol 驗收：兩台電腦各有成功的真實紀錄。學校端採用固定工作區加相對路徑。
 - 已有 SQLite 收據、Run ID、內容雜湊、禁止自動重送不明送出（`SUBMISSION_UNKNOWN`）。
 - GitHub 上的程式目前以離線模擬與驗證為主，**沒有**正式的 GUI 橋接或自動派工器。真實的成功派工來自 Codex 工作階段中的人工流程。

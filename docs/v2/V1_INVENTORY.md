@@ -2,9 +2,9 @@
 
 # MultiAgentHarness Phase 0A｜V1 原始碼盤點與相容性映射
 
-- 盤點日期為 2026-11-11（台灣時間）。工作區為 `MultiAgentHarness`，分支 `main`，基準為 `b7277e42bdc120296ba0f52f8242c899171a878e`。開始時 `git status --short --branch --untracked-files=all` 顯示本機 `main` 與既有的 `origin/main` 追蹤引用一致，無待提交變更。兩份已複製的正式文件當時受忽略規則排除。
+- 盤點日期為 2026-11-11（台灣時間）。工作區為 `MultiAgentHarness`，分支 `main`，基準為 `3217e8cd8472d09af168a5d91a9a5a29e9987295`。開始時 `git status --short --branch --untracked-files=all` 顯示本機 `main` 與既有的 `origin/main` 追蹤引用一致，無待提交變更。兩份已複製的正式文件當時受忽略規則排除。
 - 依 [正式規格](../archive/MultiAgentHarness_V2_Final_Spec.md) 及 [實作計畫](../archive/MultiAgentHarness_V2_Implementation_Plan.md) 定義 V2 目標。V1 行為以該提交的程式與測試為準。本文的映射是後續實作建議。
-- `git log -n 5 --oneline` 依序為 `b7277e4`、`617d0db`、`179d02f`、`42ae6ea`、`1c483c6`。
+- `git log -n 5 --oneline` 依序為 `3217e8c`、`bb148c1`、`65e9078`、`b0ef9dd`、`6d4a108`。
 
 ## 1. 執行環境、檔案與離線測試
 
