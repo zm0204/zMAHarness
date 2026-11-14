@@ -8,7 +8,7 @@ Subclasses provide only: the receipt prefix, executable resolution, required fla
 vector, the read-only argument check, the worker environment, the stdout normalizer and the
 receipt-integrity reason string.
 """
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import errno
 from hashlib import sha256
 import os
@@ -50,6 +50,8 @@ class CliCapture:
     wall_milliseconds: int | None = None
     workspace_changed: bool | None = None
     workspace_after_sha256: str | None = None
+    # Files the CLI itself writes into the run directory (for example a last-message file), by name.
+    outputs: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,9 @@ def _check_capture(capture):
             or (capture.exit_code is not None and type(capture.exit_code) is not int)
             or (capture.wall_milliseconds is not None and _count(capture.wall_milliseconds) is None)
             or capture.termination not in TERMINATIONS
-            or (capture.launch_detail is not None and not isinstance(capture.launch_detail, dict))):
+            or (capture.launch_detail is not None and not isinstance(capture.launch_detail, dict))
+            or not isinstance(capture.outputs, dict)
+            or any(not isinstance(name, str) or not isinstance(data, bytes) for name, data in capture.outputs.items())):
         raise LedgerError(2, "Invalid Worker process capture")
     if capture.termination == "not_started":
         if (capture.launch_error != "process_not_started" or capture.exit_code is not None
@@ -109,6 +113,8 @@ class CliWorkerAdapter:
     success_status = "SUCCESS"
     # When False, only the CLI's structured result is accepted; free text is never parsed as a result.
     check_response_agreement = True
+    # Run-directory files the CLI writes itself; they are sealed into the capture after exit.
+    output_files = ()
 
     def __init__(self, manager, *, command=None, max_task_bytes=32768):
         self.manager = manager
@@ -137,6 +143,20 @@ class CliWorkerAdapter:
         """Map CLI stdout to conversation_id, raw_status, response, num_turns, usage, model_observed,
         effort_observed and, when present, structured_output / json_schema / response_invalid."""
         raise NotImplementedError
+
+    # ---- Optional hooks (defaults keep metadata, process records and receipts unchanged) -----------
+    def argv_context(self, *, run_id, directory, cwd):
+        """Extra keyword arguments for build_argv, for example run-directory or worker-directory paths."""
+        return {}
+
+    def invocation_files(self, *, run_id, template):
+        """Run-directory files published before the launch claim, as {name: bytes}. Their hashes are
+        bound into invocation.json under launch_files."""
+        return {}
+
+    def normalize_capture(self, capture):
+        """Normalize a sealed capture; the default reads stdout only."""
+        return self.normalize_stdout(capture.stdout)
 
     # ---- Shared lifecycle --------------------------------------------------------------------------
     def _file(self, suffix):
@@ -242,7 +262,8 @@ class CliWorkerAdapter:
         bundle = self._bundle_for_launch(task, template)
         kind = "read_only" if bundle is not None else "disposable_worktree"
         schema = _response_schema(run_id, template, self.manager.max_summary_chars)
-        argv = self.build_argv(executable, model=model, effort=effort, kind=kind, schema=schema)
+        argv = self.build_argv(executable, model=model, effort=effort, kind=kind, schema=schema,
+                               **self.argv_context(run_id=run_id, directory=directory, cwd=cwd))
         if os.name == "nt" and len(subprocess.list2cmdline(argv).encode("utf-16-le")) // 2 >= 32767:
             raise LedgerError(16, "Schema exceeds the Windows command-line limit")
         prompt = self.prompt_bytes(run_id, template, task_text)
@@ -254,6 +275,11 @@ class CliWorkerAdapter:
             "workspace_baseline_sha256": baseline, "workspace_kind": kind, "timeout_s": timeout_s,
             "verification_requirements": requirements,
         }
+        launch_files = self.invocation_files(run_id=run_id, template=template)
+        if launch_files:
+            metadata["launch_files"] = {name: sha256(content).hexdigest() for name, content in launch_files.items()}
+        if self.output_files:
+            metadata["output_files"] = list(self.output_files)
         if bundle is not None:
             metadata.update(launch_profile="context-bundle", bundle_manifest_sha256=bundle[1],
                             permissions_observed="unknown", sandbox_observed="unknown", tools_observed="unknown")
@@ -296,6 +322,15 @@ class CliWorkerAdapter:
         if sha256(prompt).hexdigest() != metadata["prompt_sha256"] or plan.stdin_file.parent != directory:
             raise LedgerError(20, "Worker prompt does not match the prepared invocation")
         _publish(plan.stdin_file, prompt)
+        launch_files = self.invocation_files(run_id=plan.run_id, template=plan.template)
+        if {name: sha256(content).hexdigest() for name, content in launch_files.items()} != metadata.get(
+                "launch_files", {}):
+            raise LedgerError(20, "Worker launch files do not match the prepared invocation")
+        for name, content in launch_files.items():
+            _publish(directory / name, content)
+        for name in self.output_files:
+            if os.path.lexists(directory / name):
+                raise LedgerError(20, "Worker output file already exists; do not launch")
         scope = manager.claim_launch(plan.run_id, invocation=plan.metadata)
         started_at = timestamp(manager.ledger.clock())
         clock_started = monotonic()
@@ -361,12 +396,18 @@ class CliWorkerAdapter:
                 after, _ = _invocation_snapshot(handle.plan)
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
+        outputs = {}
+        for name in self.output_files:
+            try:
+                outputs[name] = _read(directory / name)
+            except FileNotFoundError:
+                pass
         return CliCapture(
             handle.plan.run_id, handle.plan.task_sha256, sha256(handle.plan.metadata).hexdigest(),
             _read(directory / self._file("stdout.pending")), _read(directory / self._file("stderr.pending")),
             exit_code, termination=termination, launch_error=handle.launch_error, launch_detail=handle.launch_detail,
             wall_milliseconds=wall_milliseconds, workspace_changed=None if after is None else after != handle.plan.baseline,
-            workspace_after_sha256=after,
+            workspace_after_sha256=after, outputs=outputs,
         )
 
     def persist_capture(self, handle, capture):
@@ -374,6 +415,11 @@ class CliWorkerAdapter:
         record = asdict(capture)
         record["stdout"] = sha256(capture.stdout).hexdigest()
         record["stderr"] = sha256(capture.stderr).hexdigest()
+        # Recorded only for Adapters that declare output files, so other receipts keep their exact bytes.
+        if self.output_files:
+            record["outputs"] = {name: sha256(data).hexdigest() for name, data in capture.outputs.items()}
+        else:
+            record.pop("outputs")
         record["process"] = handle.process_identity
         record["started_at"] = handle.started_at
         _publish(self.manager._directory(capture.run_id) / self._file("process.json"), _bytes(record))
@@ -396,6 +442,15 @@ class CliWorkerAdapter:
             if sha256(data).hexdigest() != record[name]:
                 raise LedgerError(30, "Worker process receipt does not match its streams")
             streams[name] = data
+        outputs = {}
+        for name, digest in record.pop("outputs", {}).items():
+            if name not in self.output_files:
+                raise LedgerError(30, "Worker process receipt names an undeclared output file")
+            data = _read(directory / name)
+            if sha256(data).hexdigest() != digest:
+                raise LedgerError(30, "Worker process receipt does not match its output files")
+            outputs[name] = data
+        streams["outputs"] = outputs
         for key in ("process", "started_at"):
             record.pop(key)
         record["tool_events"] = tuple(record["tool_events"])
@@ -481,7 +536,7 @@ class CliWorkerAdapter:
                 raise LedgerError(30, "Worker invocation belongs to a different task")
             required = requirements_for(metadata["verification_requirements"])["required_tools"]
             tool_reason, _ = Verifier._check_tools(capture.tool_events, required)
-            observed = self.normalize_stdout(capture.stdout)
+            observed = self.normalize_capture(capture)
             response = observed["response"] if observed else None
             conversation = observed["conversation_id"] if observed else None
             if conversation and (run["conversation_id"] not in (None, conversation) or db.execute(
@@ -524,6 +579,8 @@ class CliWorkerAdapter:
                 "observation": observation, "classification": state, "reason": reason,
                 "result_sha256": result_hash,
             }
+            if self.output_files:
+                receipt["outputs_sha256"] = {name: sha256(data).hexdigest() for name, data in capture.outputs.items()}
             events = ({"type": "worker_exit", **receipt}, *capture.tool_events)
             journal = b"".join(_bytes(item | {"run_id": run_id}) + b"\n" for item in events)
             receipt["events_sha256"] = sha256(journal).hexdigest()
@@ -614,6 +671,13 @@ class CliWorkerAdapter:
                 return False
             files = {"invocation.json": "invocation_sha256", f"{cls.prefix}.stdout.json": "stdout_sha256",
                      f"{cls.prefix}.stderr.txt": "stderr_sha256", "events.jsonl": "events_sha256"}
-            return all(sha256(_read(directory / name)).hexdigest() == receipt[field] for name, field in files.items())
+            if not all(sha256(_read(directory / name)).hexdigest() == receipt[field] for name, field in files.items()):
+                return False
+            if not cls.output_files:
+                return "outputs_sha256" not in receipt
+            outputs = receipt["outputs_sha256"]
+            if not isinstance(outputs, dict) or not set(outputs) <= set(cls.output_files):
+                return False
+            return all(sha256(_read(directory / name)).hexdigest() == digest for name, digest in outputs.items())
         except (OSError, ValueError, KeyError, TypeError, RecursionError):
             return False

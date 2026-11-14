@@ -61,6 +61,26 @@
 基底只啟動原生 `.exe`，參數向量的第一個元素必須等於重新解析出的執行檔；不經由 `.cmd`、`.bat`、`.ps1` 或 `cmd.exe` 轉呼。
 程序確定沒有啟動時，Run 記為 `SUBMISSION_UNKNOWN`（原因 `process_not_started`），Grant 不退回，由 `mah resolve <run_id> --mark-failed` 收尾。
 
+基底另有幾個選用掛鉤，預設值不會改變 metadata、程序收據或收據的位元組（`claude-print` 沒有使用它們）：
+
+- `argv_context(run_id, directory, cwd)`：傳給 `build_argv` 的額外參數，例如 Run 目錄或工作目錄的路徑。
+- `invocation_files(run_id, template)`：在啟動前寫入 Run 目錄的檔案（`{名稱: 位元組}`），雜湊綁定在 `invocation.json` 的 `launch_files`。
+- `output_files`：CLI 自己寫進 Run 目錄的檔案名稱。結束後封存進收據（`outputs_sha256`），`collect_saved` 與 `capture_matches` 都會核對雜湊。
+- `normalize_capture(capture)`：解析整份收據；預設只讀 stdout。
+
+### codex-exec
+
+`codex-exec`（[`codex_exec.py`](../mah/adapters/codex_exec.py)）只啟動原生 `codex.exe`，停用所有工具，**只支援 Context-Bundle**：
+Codex 只能透過 shell 或 code mode 工具讀檔，而 `-s read-only` 的讀取範圍是整台電腦，無法綁在 Disposable Worktree 內。
+
+- Disposable Worktree 與非唯讀模板一律在預留 Grant 之前以結束碼 17 拒絕。預設設定 `defaults.delegate_implement.adapter` 雖然仍是
+  `codex-exec`，實際以 `codex-exec` 派 delegate-implement 會得到 17，訊息說明它只執行唯讀分析、所有工具都已停用。
+- 結構化結果以 `-o` 寫出的 last message 檔為準，並必須與 JSONL 最後一則 agent message 一致；`--output-schema` 由共用的
+  `_response_schema` 以程式轉換成嚴格相容版（移除 `minLength` 等關鍵字、`const` 改成單值 `enum`），Verifier 仍以完整模板規則驗收。
+- 殘餘風險：`apply_patch` 工具沒有可關閉的設定，以 `-s read-only`、空的 Bundle 目錄與 `approval_policy="never"` 圍堵。
+- 殘餘風險：`CODEX_HOME` 的全域 `AGENTS.md`（及 `AGENTS.override.md`）會注入 Worker，目前沒有可關閉的設定；`project_doc_max_bytes=0` 只擋專案層級的指示。
+  Context-Bundle 模式工具全關，影響僅限回答內容，輸出仍受 schema 與 Verifier 約束。Doctor 偵測到非空的全域指示時會以「需人工驗證」提示。
+
 ## 4. 選用能力：收據完整性檢查
 
 若 Adapter 會封存可獨立核對的程序收據，可註冊 `check(run_directory, run_summary, result_sha256) -> bool`，並以 `capture_reason` 提供原因字串。Verifier 在結果已完成時呼叫它；回傳 `False` 時驗收維持 `pending`，原因為該 Adapter 註冊的字串（`agy-print` 為 `agy_capture_integrity`，`claude-print` 為 `claude_capture_integrity`；沒提供時為 `capture_integrity`）。沒有註冊檢查時 Verifier 直接略過。繼承 `CliWorkerAdapter` 的 Adapter 可直接註冊它的 `capture_matches`。
@@ -87,3 +107,4 @@
 
 - **agy 搬到共用基底。** `cli_worker.py` 是從 `AgyPrintAdapter` 移植並參數化的；為了不影響已通過真實驗收的 agy，這一階段沒有改 `agy_print.py`，所以兩者暫時有一份刻意保留的重複。等 `codex-exec` 也用同一個基底並通過真實驗收後，另開一個純重構階段，把 agy 搬到基底上，以 agy 現有的測試當護欄。
 - **退款證據通用化。** 屆時把帳本退款判斷裡 agy 專屬的 `agy_capture_sha256` 通用化成 `capture_sha256`（基底已使用這個名稱），`claude-print` 就可以開啟 `refunds_unstarted_process`，讓確定沒啟動的程序退回 Grant。
+- **帳本欄位與暫存檔。** CLI Worker 的帳本 `runs.model_observed`、`runs.cli_version` 目前為 null（實際值記在收據的 `observation` 與 `cli_version`），Run 目錄也會留下 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`。這兩項延到「agy 搬上共用基底」的重構階段一起處理。

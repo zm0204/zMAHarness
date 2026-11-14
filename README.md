@@ -12,6 +12,7 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 - **主控**　[Codex Desktop](https://openai.com/codex/) 或 [Claude Code](https://code.claude.com/docs/) 二選一。
 - **Worker**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。
 - **Claude Worker（選用）**　以 `npm install -g @anthropic-ai/claude-code` 安裝 Claude Code CLI，再執行 `claude auth login`（或執行 `claude` 依畫面）以 Claude 帳號登入。Worker 使用的是你的 Claude 訂閱，跟你平常使用 Claude 共用同一份 Pro 用量上限。請不要設定 `ANTHROPIC_API_KEY`，否則 CLI 會改用 API 計費；zMAHarness 啟動 Worker 時會移除所有 `ANTHROPIC_` 開頭的變數，但你自己在終端機執行 `claude` 時仍會受影響。zMAHarness 只啟動套件內的原生 `claude.exe`，不經由 npm 的 `claude.cmd` 轉呼。
+- **GPT Worker（選用）**　以 `npm install -g @openai/codex` 安裝 Codex CLI，再執行 `codex login` 以 ChatGPT 帳號登入。Worker 使用你的 ChatGPT 訂閱，跟你平常使用 Codex 共用同一份用量上限。請不要設定 `OPENAI_API_KEY`（或 `CODEX_API_KEY`），否則會改用 API 計費；zMAHarness 啟動 Worker 時會移除所有 `OPENAI_` 開頭的變數，以及 `CODEX_HOME` 以外的 `CODEX_` 變數。`codex-exec` 目前**只支援 Context-Bundle**，並停用 Codex 的所有工具。殘餘風險：Codex 會把你的全域 `AGENTS.md` 注入 Worker，無法以設定關閉；工具全關時影響僅限回答內容，輸出仍受 schema 與 Verifier 約束，Doctor 會提示。zMAHarness 只啟動套件內的原生 `codex.exe`，不經由 npm 的 `codex.cmd` 轉呼。
 - **本機工具**　Git、PowerShell 5.1 或 7、Python 3.11 以上。請將要使用的 `python.exe` 加入 PATH，並啟用 Python 使用者套件目錄。
 
 可在一般 PowerShell 終端機執行 `winget install -e --id Python.Python.3.13`，或從 python.org 安裝並勾選 **Add python.exe to PATH**。如果 `python.exe` 指向 `Microsoft\WindowsApps` 且無法執行，那是 Microsoft Store 的假捷徑，不是真的 Python；請到「設定 → 應用程式 → 進階應用程式設定 → 應用程式執行別名」關閉 `python.exe` 和 `python3.exe`，重開終端機後再執行安裝。
@@ -22,8 +23,8 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 | --- | --- |
 | Gemini | **真實派工**：T5 觸發 BatchTable 跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板及 Disposable Worktree 的真實端到端流程尚未驗收。 |
 | Claude | Sonnet、Opus 已列為 `agy-print` 的候選模型，真實 Worker 派工尚未驗收。 |
-| Claude（`claude-print`） | 離線測試通過，真實派工尚未驗收。 |
-| Codex | 已驗證巢狀 CLI 的 JSONL、Thread ID 和 UTF-8。該次工具操作遭政策拒絕，正式 `codex-exec` Adapter 尚未接入或驗收。 |
+| Claude（`claude-print`） | **真實派工已驗收**：BatchTable，`sonnet · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。 |
+| GPT（`codex-exec`） | 離線測試通過，真實派工尚未驗收。只支援 Context-Bundle。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |
 
 Skill 所列模型 ID 以 2026 年 11 月的 `agy models` 為準，日後可能隨 CLI 或帳號可用模型變動。
@@ -104,8 +105,7 @@ suggested_controller = "Codex Sol High"
 
 以下項目**規劃中，尚未實作**。
 
-1) `codex-exec`（GPT）Worker。
-2) OpenAI 相容 API Worker（DeepSeek、Ollama 等本地模型）。僅支援 Context-Bundle，需使用者自行提供 API 金鑰。
+1) OpenAI 相容 API Worker（DeepSeek、Ollama 等本地模型）。僅支援 Context-Bundle，需使用者自行提供 API 金鑰。
 
 ## 離線驗證
 

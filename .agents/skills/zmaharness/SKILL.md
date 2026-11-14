@@ -24,6 +24,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 
 - 輸出 JSON 的 `ok` 為 `false`（結束碼 30）時不出卡。用一句話告訴使用者原因（取自 `reasons`），然後由主控 Agent 自己繼續原任務。
 - `--adapter` 依下方「Adapter 路由」決定。Claude 模型先檢查 `claude-print`，不 ok 時改檢查 `agy-print`；兩個都不 ok 就不出卡。
+  GPT 模型檢查 `codex-exec`，不 ok 就不出卡。
 - `--repo` 使用主控目前工作資料夾所屬的 Git 專案。要審查的檔案不在目前的工作資料夾內時，不出卡，請使用者在該專案開啟主控。
 - 雲端硬碟、網頁等不在本機 Git 專案裡的資料，不在協作範圍內，不出卡。
 - `needs_unsandboxed_dispatch` 會影響卡片的【授權限制】，規則見下方「對話內提議」。
@@ -73,6 +74,10 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 **Adapter 路由。** Gemini 系列用 `agy-print`。Claude 系列優先用 `claude-print`，模型寫 Claude 的名稱（`sonnet`、`opus`）加上 effort。
 `claude-print` 的出卡前檢查不 ok 時，Claude 模型改用 `agy-print` 的 `claude-sonnet-5-5-<effort>`、`claude-opus-5-5-<effort>` ID；
 兩個都不 ok 就不出卡。卡片的【建議模型】只顯示模型與 effort，不顯示 Adapter 名稱。
+GPT 系列（例如 `gpt-5.6-luna`、`gpt-5.6-terra`）走 `codex-exec`，effort 只能 `low`、`medium`、`high`、`xhigh`。
+`codex-exec` 只支援 Context-Bundle 與唯讀模板；需要 Disposable Worktree 時不要建議 GPT 模型。
+**主控是 Codex 時，卡片不主動建議 `codex-exec`**（同家族，缺少異質視角），只有使用者明確指定 GPT 模型時才用。
+主控是 Claude Code 時，GPT 模型可作為異質選項。
 
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
 這類任務的選項 2 建議 `gemini-4-argon-high · high`，選項 3 沿用備選規則。使用者手打指定時不受此限。
@@ -117,6 +122,8 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 
 上表前四列是 `agy-print` 的模型 ID；後兩列是 `claude-print` 的寫法，模型用名稱、effort 另用 `--effort` 指定。
 只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
+指定 GPT 模型（例如「用 luna」、「換 gpt-5.6-terra」）時用 `codex-exec`，模型寫完整 ID（`luna` 即 `gpt-5.6-luna`），
+effort 另用 `--effort`（`low`～`xhigh`）。可用的 GPT 模型以本機 `codex debug models` 為準；原本是 Disposable Worktree 時須先改提 Context-Bundle。
 
 只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
 只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，

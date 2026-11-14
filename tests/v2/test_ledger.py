@@ -32,7 +32,7 @@ class LedgerTests(unittest.TestCase):
             trigger_ids=["T2"],
             prepare_mode="card",
             allowed_templates=["review"],
-            allowed_targets=[{"adapter": "codex-exec", "model": "fixture", "effort_max": "medium"}],
+            allowed_targets=[{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "medium"}],
             max_dispatches=2,
             ttl_minutes=1,
         )
@@ -48,7 +48,7 @@ class LedgerTests(unittest.TestCase):
         options = dict(
             repo_root=self.directory,
             template="review",
-            adapter="codex-exec",
+            adapter="legacy-fixture",
             model="fixture",
             effort="low",
             workspace_kind="read_only",
@@ -98,7 +98,7 @@ class LedgerTests(unittest.TestCase):
         for overrides in (
             {"max_dispatches": 3},
             {"ttl_minutes": 4},
-            {"allowed_targets": [{"adapter": "codex-exec", "model": "fixture", "effort_max": "xhigh"}]},
+            {"allowed_targets": [{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "xhigh"}]},
         ):
             with self.subTest(overrides=overrides):
                 self.assert_code(16, self.make_card, **overrides)
@@ -234,7 +234,7 @@ database, repo, grant = sys.argv[1:]
 try:
     GrantLedger(database).check_and_reserve(
         grant, f"review-test-{uuid4().hex}", repo_root=repo, template="review",
-        adapter="codex-exec", model="fixture", effort="low", workspace_kind="read_only",
+        adapter="legacy-fixture", model="fixture", effort="low", workspace_kind="read_only",
         workspace_path=repo, task_sha256=sha256(b"synthetic").hexdigest(),
     )
 except LedgerError as exc:

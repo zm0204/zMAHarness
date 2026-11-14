@@ -9,7 +9,10 @@ from .base import AdapterPolicy
 DEFAULT_POLICY = AdapterPolicy()
 
 ADAPTER_POLICIES = {
-    "codex-exec": AdapterPolicy(user_configurable=True),
+    "codex-exec": AdapterPolicy(
+        user_configurable=True, requires_dispatch_scope=True, attended_approval_only=True,
+        template_verified=True, run_id_prefix="codex",
+    ),
     "gui-terra": AdapterPolicy(user_configurable=True, gui_submission=True),
     "agy-print": AdapterPolicy(
         user_configurable=True, requires_dispatch_scope=True, attended_approval_only=True,
@@ -61,19 +64,43 @@ def _claude_print_executable(config):
     return ClaudePrintAdapter.from_config(None, config).find_executable()
 
 
+def _codex_exec_factory(manager, config):
+    from .codex_exec import CodexExecAdapter
+
+    return CodexExecAdapter.from_config(manager, config)
+
+
+def _codex_exec_capture_check(directory, run, result_sha256):
+    from .codex_exec import CodexExecAdapter
+
+    return CodexExecAdapter.capture_matches(directory, run, result_sha256)
+
+
+def _codex_exec_executable(config):
+    from .codex_exec import CodexExecAdapter
+
+    return CodexExecAdapter.from_config(None, config).find_executable()
+
+
 # factory(manager, config) -> an object implementing mah.adapters.base.Adapter
-ADAPTER_FACTORIES = {"agy-print": _agy_print_factory, "claude-print": _claude_print_factory}
+ADAPTER_FACTORIES = {"agy-print": _agy_print_factory, "claude-print": _claude_print_factory,
+                     "codex-exec": _codex_exec_factory}
 # check(run_directory, run_summary, result_sha256) -> bool; optional receipt integrity capability.
-CAPTURE_CHECKS = {"agy-print": _agy_print_capture_check, "claude-print": _claude_print_capture_check}
+CAPTURE_CHECKS = {"agy-print": _agy_print_capture_check, "claude-print": _claude_print_capture_check,
+                  "codex-exec": _codex_exec_capture_check}
 # The Verifier reason when a registered check fails; each Adapter names its own.
-CAPTURE_REASONS = {"agy-print": "agy_capture_integrity", "claude-print": "claude_capture_integrity"}
+CAPTURE_REASONS = {"agy-print": "agy_capture_integrity", "claude-print": "claude_capture_integrity",
+                   "codex-exec": "codex_capture_integrity"}
 DEFAULT_CAPTURE_REASON = "capture_integrity"
 # lookup(config) -> resolved path or None; optional read-only Worker executable check for preflight.
-EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable, "claude-print": _claude_print_executable}
+EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable, "claude-print": _claude_print_executable,
+                      "codex-exec": _codex_exec_executable}
 # The preflight reason when the lookup finds nothing; a generic sentence is used otherwise.
 EXECUTABLE_MISSING_REASONS = {
     "claude-print": ("找不到 claude 的原生執行檔（.exe）。zMAHarness 不經由 .cmd、.bat、.ps1 轉呼啟動；"
                      "請在本機 TOML 把 claude_command 設成 claude.exe 的絕對路徑。"),
+    "codex-exec": ("找不到 codex 的原生執行檔（.exe）。zMAHarness 不經由 .cmd、.bat、.ps1 轉呼啟動；"
+                   "請在本機 TOML 把 codex_command 設成 codex.exe 的絕對路徑。"),
 }
 
 

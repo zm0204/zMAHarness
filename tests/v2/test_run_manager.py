@@ -40,7 +40,7 @@ try:
         grant = ledger.list_grants()[0]["grant_id"]
         workspace = ledger.database.parent
         ledger.check_and_reserve(
-            grant, run, repo_root=workspace, template="review", adapter="codex-exec",
+            grant, run, repo_root=workspace, template="review", adapter="legacy-fixture",
             model="fixture", effort="low", workspace_kind="read_only",
             workspace_path=workspace, task_sha256=sha256(b"synthetic").hexdigest(),
         )
@@ -86,7 +86,7 @@ class RunManagerTests(unittest.TestCase):
         digest = self.ledger.create_card(
             "card-1", repo_root=self.state, task_key="review", trigger_ids=["T2"],
             prepare_mode="card", allowed_templates=["review"],
-            allowed_targets=[{"adapter": "codex-exec", "model": "fixture", "effort_max": "low"}],
+            allowed_targets=[{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "low"}],
             max_dispatches=2, ttl_minutes=10,
         )
         self.grant = self.ledger.approve("card-1", digest, via="manual_cli")
@@ -94,7 +94,7 @@ class RunManagerTests(unittest.TestCase):
     def reserve(self):
         return self.ledger.check_and_reserve(
             self.grant, f"review-{uuid4().hex}", repo_root=self.state,
-            template="review", adapter="codex-exec", model="fixture", effort="low",
+            template="review", adapter="legacy-fixture", model="fixture", effort="low",
             workspace_kind="read_only", workspace_path=self.state,
             task_sha256=sha256(TASK).hexdigest(),
         )
@@ -358,7 +358,7 @@ class RunManagerTests(unittest.TestCase):
         digest = self.ledger.create_card(
             "card-2", repo_root=self.state, task_key="review", trigger_ids=["T2"],
             prepare_mode="card", allowed_templates=["review"],
-            allowed_targets=[{"adapter": "codex-exec", "model": "fixture", "effort_max": "low"}],
+            allowed_targets=[{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "low"}],
             max_dispatches=2, ttl_minutes=10,
         )
         self.grant = self.ledger.approve("card-2", digest, via="manual_cli")

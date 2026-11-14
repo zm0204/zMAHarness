@@ -12,6 +12,7 @@ zMAHarness follows a **Single-Agent First** workflow. The controller agent (Code
 - **Controller**　Either [Codex Desktop](https://openai.com/codex/) or [Claude Code](https://code.claude.com/docs/).
 - **Worker**　Install the Antigravity CLI (`agy`) from the [official Google documentation](https://antigravity.google/docs/install?tab=cli) and sign in with a personal Google AI Pro subscription.
 - **Claude Worker (optional)**　Install the Claude Code CLI with `npm install -g @anthropic-ai/claude-code`, then sign in with your Claude account by running `claude auth login` (or run `claude` and follow the prompts). The Worker uses your Claude subscription and shares the same Pro usage limit as your everyday use of Claude. Do not set `ANTHROPIC_API_KEY`; otherwise the CLI switches to API billing. zMAHarness removes every `ANTHROPIC_` variable when it starts the Worker, but running `claude` yourself in a terminal is still affected. zMAHarness only launches the native `claude.exe` inside the package, never through npm's `claude.cmd` shim.
+- **GPT Worker (optional)**　Install the Codex CLI with `npm install -g @openai/codex`, then sign in with your ChatGPT account by running `codex login`. The Worker uses your ChatGPT subscription and shares the same usage limit as your everyday use of Codex. Do not set `OPENAI_API_KEY` (or `CODEX_API_KEY`); otherwise usage switches to API billing. zMAHarness removes every `OPENAI_` variable and every `CODEX_` variable except `CODEX_HOME` when it starts the Worker. `codex-exec` currently **supports Context-Bundle only** and disables all Codex tools. Residual risk: Codex injects your global `AGENTS.md` into the Worker and no setting turns that off; with every tool disabled the effect is limited to the answer, which is still bound by the schema and the Verifier, and Doctor flags it; zMAHarness only launches the native `codex.exe` inside the package, never through npm's `codex.cmd` shim.
 - **Local tools**　Git, PowerShell 5.1 or 7, Python 3.11 or later. Add the `python.exe` you intend to use to PATH, and enable the Python user site-packages directory.
 
 In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13`, or install from python.org and select **Add python.exe to PATH**. If `python.exe` points into `Microsoft\WindowsApps` and cannot run, it is a Microsoft Store placeholder, not a working Python installation. Disable the `python.exe` and `python3.exe` aliases under Settings → Apps → Advanced app settings → App execution aliases, then reopen the terminal before installing.
@@ -22,8 +23,8 @@ In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13
 | --- | --- |
 | Gemini | **Real dispatch**: T5 triggered a cross-project Second Opinion on BatchTable, requesting `gemini-3.8-flash-high · high` via `agy-print` in Context-Bundle mode. The controller adopted the suggestions after independent checking, and the ledger recorded `SUCCEEDED`/`ACCEPTED`. **Offline tests**: re-collection and the Verifier are validated against a de-identified real receipt from a Flash Low Review. Real end-to-end flows for other models and effort levels, the Research template, and Disposable Worktree have not been accepted yet. |
 | Claude | Sonnet and Opus are listed as candidate models for `agy-print`. Real worker dispatch has not been accepted yet. |
-| Claude (`claude-print`) | Offline tests pass; real dispatch has not been accepted yet. |
-| Codex | JSONL, Thread ID, and UTF-8 of the nested CLI have been verified. Tool operations in that run were refused by policy, and the formal `codex-exec` Adapter has not been integrated or accepted yet. |
+| Claude (`claude-print`) | **Real dispatch accepted**: BatchTable, `sonnet · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. |
+| GPT (`codex-exec`) | Offline tests pass; real dispatch has not been accepted yet. Context-Bundle only. |
 | Terra GUI | V1 file handoff was once tested in an isolated environment. Formal V2 GUI dispatch has not been accepted yet. |
 
 The model IDs listed in the Skill follow `agy models` as of November 2026 and may change with the CLI or with the models available to your account.
@@ -104,8 +105,7 @@ suggested_controller = "Codex Sol High"
 
 The following items are **planned and not yet implemented**.
 
-1) `codex-exec` (GPT) worker.
-2) OpenAI-compatible API worker (DeepSeek, and local models such as Ollama). Supports Context-Bundle only, and requires users to provide their own API key.
+1) OpenAI-compatible API worker (DeepSeek, and local models such as Ollama). Supports Context-Bundle only, and requires users to provide their own API key.
 
 ## Offline verification
 

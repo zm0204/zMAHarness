@@ -63,7 +63,7 @@ class CliTests(unittest.TestCase):
         card = dict(
             card_id=card_id, repo_root=str(REPO), task_key="sample-review",
             trigger_ids=["T2"], prepare_mode="card", allowed_templates=["review"],
-            allowed_targets=[{"adapter": "codex-exec", "model": "synthetic", "effort_max": "low"}],
+            allowed_targets=[{"adapter": "gui-terra", "model": "synthetic", "effort_max": "low"}],
             max_dispatches=1,
         )
         self.card_file.write_text(json.dumps(card | changes), encoding="utf-8")
@@ -85,7 +85,7 @@ class CliTests(unittest.TestCase):
         shown = self.check(0, "card", "show", "demo-1").stdout
         self.assertLessEqual(len(shown.splitlines()), 8)
         self.assertIn("PROPOSED", shown)
-        self.assertIn("codex-exec / synthetic / low", shown)
+        self.assertIn("gui-terra / synthetic / low", shown)
         self.assertIn(digest, shown)
         self.check(0, "card", "reject", "demo-1")
         self.assertIn("REJECTED", self.check(0, "card", "show", "demo-1").stdout)
@@ -174,7 +174,7 @@ class CliTests(unittest.TestCase):
         ledger = GrantLedger(self.database)
         run = ledger.check_and_reserve(
             current, f"sample-review-{uuid4().hex}", repo_root=REPO,
-            template="review", adapter="codex-exec", model="synthetic", effort="low",
+            template="review", adapter="gui-terra", model="synthetic", effort="low",
             workspace_kind="read_only", workspace_path=REPO,
             task_sha256=sha256(b"synthetic").hexdigest(),
         )

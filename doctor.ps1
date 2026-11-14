@@ -258,6 +258,16 @@ try {
 }
 catch { Report-Check '失敗' 'agy 執行檔' $_.Exception.Message }
 
+# codex-exec 的殘餘風險：Codex 會把 CODEX_HOME 的全域指示注入 Worker，無法以設定關閉。只提示，不影響結束碼。
+$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } elseif ($env:USERPROFILE) { Join-Path $env:USERPROFILE '.codex' } else { $null }
+if ($codexHome) {
+    $globalInstructions = @('AGENTS.md', 'AGENTS.override.md') | ForEach-Object { Join-Path $codexHome $_ } |
+        Where-Object { [IO.File]::Exists($_) -and (Get-Item -LiteralPath $_).Length -gt 0 }
+    if ($globalInstructions) {
+        Report-Check '需人工驗證' 'Codex 全域指示' ("codex-exec Worker 會注入這些檔案的內容：" + ($globalInstructions -join '、') + "。Context-Bundle 模式工具全關，影響僅限回答內容，輸出仍受 schema 與 Verifier 約束。")
+    }
+}
+
 # claude 原生執行檔的解析只在 Python（mah preflight）；沒有可用的 Python 時略過。
 if ($python -and -not $pathsFailed) {
     try {

@@ -293,6 +293,37 @@ class ClaudeFixtureTests(WorkerFixture, unittest.TestCase):
         self.executable.write_bytes(b"stand-in path; never executed")
         return ClaudePrintAdapter(self.manager, command=str(self.executable))
 
+    def test_receipts_keep_the_phase_3a_byte_layout(self):
+        """Base hooks are opt-in: Claude receipts keep exactly the keys written by phase 3a."""
+        import subprocess
+        import sys
+
+        def replay(argv, **kwargs):
+            code = "import sys; sys.stdin.buffer.read(); sys.stdout.buffer.write(open(sys.argv[1], 'rb').read())"
+            return self.real_popen([sys.executable, "-I", "-B", "-c", code, str(FIXTURE)], **kwargs)
+
+        self.dispatch(bundle=True, popen=replay, run_id=FIXTURE_RUN_ID)
+        directory = self.directory()
+        keys = {name: sorted(json.loads((directory / name).read_bytes())) for name in
+                ("claude.capture.json", "claude.process.json", "invocation.json")}
+        self.assertEqual(keys["claude.capture.json"], [
+            "adapter", "classification", "cli_version", "effort_requested", "events_sha256", "executable", "exit_code",
+            "invocation_sha256", "launch_detail", "launch_error", "model_requested", "observation",
+            "process_receipt_sha256", "reason", "result_sha256", "run_id", "stderr_sha256", "stdout_sha256",
+            "task_sha256", "termination", "wall_milliseconds", "workspace_after_sha256", "workspace_changed"])
+        self.assertEqual(keys["claude.process.json"], [
+            "exit_code", "invocation_sha256", "launch_detail", "launch_error", "process", "run_id", "started_at",
+            "stderr", "stdout", "task_sha256", "termination", "tool_events", "wall_milliseconds",
+            "workspace_after_sha256", "workspace_changed"])
+        self.assertEqual(keys["invocation.json"], [
+            "argv", "bundle_manifest_sha256", "cli_version", "cwd", "executable", "launch_profile",
+            "permissions_observed", "prompt_sha256", "run_id", "sandbox_observed", "stdin_file", "task_sha256",
+            "timeout_s", "tools_observed", "verification_requirements", "workspace_baseline_sha256", "workspace_kind"])
+        stored = (directory / "claude.capture.json").read_bytes()
+        # Re-collecting rebuilds the receipt and refuses any byte difference from the stored one.
+        self.adapter.collect_saved(self.run_id)
+        self.assertEqual((directory / "claude.capture.json").read_bytes(), stored)
+
     def test_redacted_fixture_normalizes_with_the_observed_fields(self):
         raw = FIXTURE.read_bytes()
         self.assertEqual(json.loads(raw)["session_id"], "00000000-0000-4000-8000-000000000001")
