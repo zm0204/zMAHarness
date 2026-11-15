@@ -22,8 +22,8 @@ In a regular PowerShell terminal, run `winget install -e --id Python.Python.3.13
 | Worker | Acceptance scope |
 | --- | --- |
 | Gemini | **Real dispatch**: T5 triggered a cross-project Second Opinion on the author's real Python project (a table-comparison tool), requesting `gemini-3.8-flash-high · high` via `agy-print` in Context-Bundle mode. The controller adopted the suggestions after independent checking, and the ledger recorded `SUCCEEDED`/`ACCEPTED`. **Offline tests**: re-collection and the Verifier are validated against a de-identified real receipt from a Flash Low Review. Real end-to-end flows for other models and effort levels, the Research template, and Disposable Worktree have not been accepted yet. |
-| Claude | Sonnet and Opus are listed as candidate models for `agy-print`. Real worker dispatch has not been accepted yet. |
-| Claude (`claude-print`) | **Real dispatch accepted**: the author's real Python project (a table-comparison tool), `sonnet · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. |
+| Claude (`agy-print`) | Sonnet and Opus are listed as candidate models for `agy-print`. Real worker dispatch has not been accepted yet. |
+| Claude (`claude-print`) | **Real dispatch accepted** for the author's real Python project (a table-comparison tool) with `sonnet · medium` and `opus · medium`. Both were Context-Bundle Reviews and ended in `SUCCEEDED`/`ACCEPTED`. The Opus run was accepted on 2026-11-15, and the Worker reported `claude-opus-5-5`. |
 | GPT (`codex-exec`) | **Real dispatch accepted**: the author's real Python project (a table-comparison tool), Claude Code as the controller, `gpt-5.6-terra · medium`, Context-Bundle, `SUCCEEDED`/`ACCEPTED`. Context-Bundle only. |
 | Terra GUI | V1 file handoff was once tested in an isolated environment. Formal V2 GUI dispatch has not been accepted yet. |
 
