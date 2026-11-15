@@ -365,15 +365,20 @@ class RunManager:
         except (OSError, ValueError, KeyError, TypeError):
             return False
 
-    def _mark_collecting_failed(self, db, run, reason):
+    def _mark_collecting_failed(self, db, run, reason, extra):
         if reason is None:
             raise LedgerError(2, "從 COLLECTING 標記失敗須以 --reason 說明原因")
         if self._verified_by_report(run):
             raise LedgerError(30, "This result has already been verified; run mah verify again instead of marking it failed")
         return self._change(db, run, "FAILED", reason="user_marked_failed",
-                            evidence={"from_state": "COLLECTING", "user_reason": reason})
+                            evidence={"from_state": "COLLECTING", "user_reason": reason} | extra)
 
-    def resolve(self, run_id, *, action=None, reason=None):
+    def resolve(self, run_id, *, action=None, reason=None, saved_evidence_error=None):
+        """Apply a user resolution.
+
+        `saved_evidence_error` records why the sealed Worker evidence could not be recovered. Only the
+        closing actions accept it, and they still end in FAILED or ABANDONED without refunding the Grant.
+        """
         with transaction(self.database) as db:
             run = self._run(db, run_id)
             if action not in (None, "mark_failed", "abandon"):
@@ -381,19 +386,22 @@ class RunManager:
             if reason is not None and (action != "mark_failed" or not isinstance(reason, str)
                                        or not reason.strip() or len(reason) > 500):
                 raise LedgerError(2, "--reason is only for --mark-failed and must be a short nonempty text")
+            if saved_evidence_error is not None and (action is None or not isinstance(saved_evidence_error, str)):
+                raise LedgerError(2, "Saved evidence errors are recorded only by --mark-failed or --abandon")
+            extra = {} if saved_evidence_error is None else {"saved_evidence_error": saved_evidence_error[:1000]}
             # Only a run that was already COLLECTING may be marked failed from there. A result that this
             # call recovers from SUBMISSION_UNKNOWN or TIMED_OUT still takes priority over a manual failure.
             was_collecting = run["state"] == "COLLECTING"
             run = self._reconcile(db, run, resume_observation=action is None)
             if action == "mark_failed" and was_collecting and run["state"] == "COLLECTING":
-                return self._summary(db, self._mark_collecting_failed(db, run, reason))
+                return self._summary(db, self._mark_collecting_failed(db, run, reason, extra))
             if action is not None and run["state"] == "COLLECTING" and self._completion(run)[0] == "verified":
                 return self._summary(db, run)
             if action == "mark_failed" and run["state"] in ("SUBMISSION_UNKNOWN", "TIMED_OUT"):
-                run = self._change(db, run, "FAILED", reason="user_marked_failed",
-                                   evidence={"user_reason": reason} if reason is not None else None)
+                evidence = ({"user_reason": reason} if reason is not None else {}) | extra
+                run = self._change(db, run, "FAILED", reason="user_marked_failed", evidence=evidence or None)
             elif action == "abandon" and run["state"] == "SUBMISSION_UNKNOWN":
-                run = self._change(db, run, "ABANDONED", reason="user_abandoned")
+                run = self._change(db, run, "ABANDONED", reason="user_abandoned", evidence=extra or None)
             elif action is not None:
                 raise LedgerError(20, "Resolution action is not legal for this state")
             return self._summary(db, run)

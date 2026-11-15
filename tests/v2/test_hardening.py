@@ -294,6 +294,60 @@ class CollectingResolutionTests(Scratch):
         self.assertEqual(error.exception.code, 30)
         self.assertEqual(self.ledger.get_run(run)["state"], "COLLECTING")
 
+    def damaged_claude_run(self, *, streams):
+        """A COLLECTING claude-print Run whose sealed receipt exists but its streams are missing or changed."""
+        run = self.partial_run()
+        with closing(sqlite3.connect(self.ledger.database)) as db, db:
+            db.execute("UPDATE runs SET adapter = 'claude-print' WHERE run_id = ?", (run,))
+        directory = self.manager._directory(run)
+        (directory / "claude.process.json").write_text(json.dumps({
+            "run_id": run, "stdout": sha256(b"sealed stdout").hexdigest(),
+            "stderr": sha256(b"sealed stderr").hexdigest()}), encoding="utf-8")
+        if streams:
+            (directory / "claude.stdout.pending").write_bytes(b"changed stdout")
+            (directory / "claude.stderr.pending").write_bytes(b"sealed stderr")
+        return run
+
+    def assert_damaged_run_can_be_closed(self, run, expected_error):
+        collected = self.cli("collect", run)
+        self.assertNotEqual(collected.returncode, 0, collected.stdout)
+        self.assertNotEqual(self.cli("resolve", run).returncode, 0)
+        self.assertEqual(self.ledger.get_run(run)["state"], "COLLECTING")
+        with self.assertRaises(LedgerError) as busy:
+            self.reserve()
+        self.assertEqual(busy.exception.code, 13)
+
+        resolved = self.cli("resolve", run, "--mark-failed", "--reason", "封存的串流檔遺失，改由主控處理")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        view = json.loads(resolved.stdout)
+        self.assertEqual((view["state"], view["state_reason"], view["dispatch_consumed"]),
+                         ("FAILED", "user_marked_failed", 1))
+        with closing(sqlite3.connect(self.ledger.database)) as db:
+            detail = json.loads(db.execute("SELECT detail_json FROM run_events WHERE run_id = ? ORDER BY id DESC",
+                                           (run,)).fetchone()[0])
+        self.assertEqual({key: detail[key] for key in ("refund", "reason", "from_state", "user_reason")},
+                         {"refund": False, "reason": "user_marked_failed", "from_state": "COLLECTING",
+                          "user_reason": "封存的串流檔遺失，改由主控處理"})
+        self.assertIn(expected_error, detail["saved_evidence_error"])
+        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 1)
+        self.assertTrue(self.reserve())
+        self.assertNotEqual(self.cli("collect", run).returncode, 0)
+
+    def test_missing_sealed_streams_do_not_trap_mark_failed(self):
+        run = self.damaged_claude_run(streams=False)
+        self.assert_damaged_run_can_be_closed(run, "FileNotFoundError")
+
+    def test_changed_sealed_streams_do_not_trap_mark_failed(self):
+        run = self.damaged_claude_run(streams=True)
+        self.assert_damaged_run_can_be_closed(run, "does not match its streams")
+
+    def test_saved_evidence_error_is_only_recorded_by_closing_actions(self):
+        run = self.partial_run()
+        with self.assertRaises(LedgerError) as error:
+            self.manager.resolve(run, saved_evidence_error="FileNotFoundError: x")
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(self.ledger.get_run(run)["state"], "COLLECTING")
+
 
 # ---- A5 -------------------------------------------------------------------------------------------
 class SnapshotExclusionTests(Scratch):
@@ -321,6 +375,18 @@ class SnapshotExclusionTests(Scratch):
         subprocess.run([*GIT, "-C", str(repo), "stash", "-u", "-q"], check=True, capture_output=True)
         sealed = prepare_bundle(repo, ["CLAUDE.md"], instructions, self.root / "bundle", max_bytes=32768)
         self.assertEqual([item["path"] for item in sealed["manifest"]["files"]], ["CLAUDE.md"])
+
+    def test_snapshot_excludes_antigravity_agent_directory(self):
+        """Antigravity keeps workspace rules and workflows under the singular `.agent/`."""
+        repo = git_repo(self.root / "src", {".agent/rules/r.md": "rule\n", "pkg/.Agent/workflows/w.md": "flow\n",
+                                            "agent/notes.md": "kept\n", "app.py": "print(1)\n"})
+        report = prepare_worktree(repo, self.root / "trees", f"review-{uuid4().hex}")
+        tree = Path(report["worktree_path"])
+        self.addCleanup(subprocess.run, ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)],
+                        capture_output=True)
+        present = sorted(path.relative_to(tree).as_posix() for path in tree.rglob("*")
+                         if path.is_file() and ".git" not in path.parts)
+        self.assertEqual(present, ["agent/notes.md", "app.py"])
 
 
 class BundleOutputTests(Scratch):

@@ -85,7 +85,7 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 | 審查模式 | 適用情況 |
 | --- | --- |
 | **Context-Bundle** | 1～2 個核心檔案能完整封裝在預設 32 KB 的任務上限內。可以審查未提交的完整檔案。 |
-| **Disposable Worktree** | 跨檔、大檔或需要追查關聯檔案。快照納入未提交變更與符合規則的新檔，必要時只在分離 HEAD 上建立本機匿名提交。專案的 AI 設定檔（`.claude/`、`CLAUDE.md`、`CLAUDE.local.md`、`.mcp.json`、`AGENTS.md`、`AGENTS.override.md`、`.agents/`、`.gemini/`、`GEMINI.md`，任何層級）不會放進快照，Worker 看不到。 |
+| **Disposable Worktree** | 跨檔、大檔或需要追查關聯檔案。快照納入未提交變更與符合規則的新檔，必要時只在分離 HEAD 上建立本機匿名提交。專案的 AI 設定檔（`.claude/`、`CLAUDE.md`、`CLAUDE.local.md`、`.mcp.json`、`AGENTS.md`、`AGENTS.override.md`、`.agents/`、`.agent/`、`.gemini/`、`GEMINI.md`，任何層級）不會放進快照，Worker 看不到。 |
 
 兩種模式都會綁定核准範圍並保存收據。驗收成功後仍由主控決定是否採納。遇到送出狀態不明，先查現有收據與結果。Worker 與主控使用同一 Windows 帳號，唯讀限制依賴 CLI 的會話設定，工具行為未獲 OS 層完整驗證。詳見 [協作規範](.agents/skills/zmaharness/SKILL.md) 和 [使用風險](DISCLAIMER.md)。
 
@@ -99,6 +99,8 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 
 - **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits，略過派工前後的額度查詢。
 - **舊資料清理**：`privacy.retain_run_dirs_days` 目前尚未實作，不會自動清理。請定期手動刪除設定資料夾內 `state\runs` 與 `worktrees` 底下不再需要的舊資料；Disposable Worktree 請在目標專案以 `git worktree remove <路徑>` 刪除；若已直接刪掉資料夾，再執行 `git worktree prune`。
+- **清理 `state\runs` 之前**：先執行 `mah status --active` 確認沒有未結束的 Run。刪掉未結束 Run 的收據檔，會讓它無法正常收集；若 Run 卡住（例如所有派工都以結束碼 13 被拒），執行 `mah resolve <run_id> --mark-failed --reason "<原因>"` 結束它，Run 會變成 `FAILED`，Grant 不退回。
+- **codex-exec 一律以結束碼 17 拒絕，訊息提到 system Codex configuration 或 Windows Codex policy**：`C:\ProgramData\OpenAI\Codex\config.toml`、`requirements.toml` 或登錄檔 `HKLM\SOFTWARE\Policies\OpenAI\Codex` 的 `RequirementsPath` 存在時，Codex 會套用這些系統層設定，`--ignore-user-config` 擋不住，可能改變模型供應商、模型目錄或工具，所以 zMAHarness 一律拒絕。若這些檔案是你自己建立的，移除或改名後重試；若由公司管理，請不要繞過，改用其他 Worker。
 - **移除 zMAHarness**：刪除 Python 使用者套件目錄中的 `zmaharness.pth`（位置可用 `python -m site --user-site` 查詢）、上述兩處 `zmaharness` Skill 目錄，以及 `%LOCALAPPDATA%\zMAHarness`，最後刪除 clone 目錄。
 - **Worker 執行檔**：zMAHarness 只從 PATH 中的絕對路徑尋找 `claude`、`codex`、`agy`，不使用目前目錄或相對路徑下的同名檔案；解析結果位於目標專案、工作樹或 Bundle 目錄內時一律拒絕（結束碼 14）。
 - **既有安裝**：新設定尚未建立時，`mah` 會退回舊的 `%LOCALAPPDATA%\MultiAgentHarness\harness.local.toml`（若存在）。執行新版初始化後會優先使用新設定。舊 Ledger 與 Run 保留在原處，查詢或收尾舊 Run 時在子命令前指定 `--config <舊設定檔>`。

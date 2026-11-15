@@ -29,7 +29,7 @@ PRIVATE_NAMES = {
 # environment, instructions). Disposable worktree snapshots leave them out at any depth; Context-Bundle
 # still accepts them, because a bundle carries files as data and never as Worker configuration.
 WORKER_CONFIG_NAMES = {
-    ".claude", "claude.md", "claude.local.md", ".mcp.json", "agents.md", "agents.override.md", ".agents",
+    ".claude", "claude.md", "claude.local.md", ".mcp.json", "agents.md", "agents.override.md", ".agents", ".agent",
     ".gemini", "gemini.md",
 }
 PRIVATE_NAME = re.compile(r"(?:^|[._-])(?:secrets?|credentials?|api[_-]?keys?|access[_-]?tokens?)(?:[._-]|$)")

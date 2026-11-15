@@ -16,7 +16,7 @@
 
 ## 範圍
 
-zMAHarness 是在同一個 Windows 帳號下執行的本機工具。已知的信任界線與殘餘風險寫在 [DISCLAIMER.md](DISCLAIMER.md) 和 [README](README.md)，例如對話核准由主控寫入、收據雜湊鏈沒有金鑰。這些已記載的限制不算漏洞；能繞過已記載保護措施的方法（例如執行檔解析、唯讀限制、範圍綁定或登入狀態檢查）則歡迎回報。
+zMAHarness 是在同一個 Windows 帳號下執行的本機工具。已知的信任界線與殘餘風險寫在 [DISCLAIMER.md](DISCLAIMER.md) 和 [README](README.md)，例如對話核准由主控寫入、收據雜湊鏈沒有金鑰。由管理員管理的 ChatGPT 工作區帳號（Business、Enterprise、Edu）下，`codex-exec` 的正式執行會載入雲端管理設定與 requirements，派工前的工具探測看不到這份設定，詳見 [Adapter 說明](docs/ADAPTERS.md#codex-exec)。這些已記載的限制不算漏洞；能繞過已記載保護措施的方法（例如執行檔解析、唯讀限制、範圍綁定或登入狀態檢查）則歡迎回報。
 
 本專案由個人維護，沒有固定的回覆時限，會盡力處理。
 
@@ -28,4 +28,4 @@ Use GitHub's private vulnerability reporting: open the **Security** tab of this 
 
 Include the affected version or commit, steps to reproduce, your Windows, Python, and CLI (`agy`, `claude`, `codex`) versions, and the impact you observed. Do not attach real API keys, credentials, ledgers, or private project content; reproduce with synthetic data.
 
-The known trust boundaries and residual risks are documented in [DISCLAIMER.md](DISCLAIMER.md) and the [README](README.en.md). Those documented limits are not vulnerabilities, but ways to bypass a documented safeguard are welcome reports. This project is maintained by one person on a best-effort basis.
+The known trust boundaries and residual risks are documented in [DISCLAIMER.md](DISCLAIMER.md) and the [README](README.en.md). For example, with a ChatGPT workspace account managed by an administrator (Business, Enterprise, Edu), a real `codex-exec` run loads cloud-managed settings and requirements that the pre-dispatch tool probe cannot see; see the [adapter documentation](docs/ADAPTERS.md#codex-exec). Those documented limits are not vulnerabilities, but ways to bypass a documented safeguard are welcome reports. This project is maintained by one person on a best-effort basis.

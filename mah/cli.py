@@ -322,9 +322,19 @@ def main(argv=None):
             output(manager.status(args.run_id))
         elif args.group == "resolve":
             run = ledger.get_run(args.run_id)
+            saved_evidence_error = None
             if run is not None and has_factory(run["adapter"]):
-                create_adapter(run["adapter"], manager, config).collect_saved(args.run_id)
-            output(manager.resolve(args.run_id, action=args.resolution, reason=args.reason))
+                try:
+                    create_adapter(run["adapter"], manager, config).collect_saved(args.run_id)
+                except (FileNotFoundError, LedgerError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    # Damaged sealed evidence must not trap the Run: the closing actions record the error
+                    # and still end in FAILED or ABANDONED. Every other action stays strict.
+                    if args.resolution not in ("mark_failed", "abandon") or (
+                            isinstance(exc, LedgerError) and exc.code != 30):
+                        raise
+                    saved_evidence_error = f"{type(exc).__name__}: {exc}"
+            output(manager.resolve(args.run_id, action=args.resolution, reason=args.reason,
+                                   saved_evidence_error=saved_evidence_error))
         elif args.group in ("accept", "reject-result"):
             output(manager.record_acceptance(
                 args.run_id, accepted=args.group == "accept", reason=args.reason,
