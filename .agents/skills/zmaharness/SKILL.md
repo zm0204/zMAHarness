@@ -67,6 +67,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 
 | 任務 | 建議模型與 effort |
 | --- | --- |
+| Claude Code 主控的 Review／T1 第二意見，符合 Context-Bundle | 本機 `codex debug models` 確認 GPT 可用，且 `codex-exec` 和 `agy-print` 均通過出卡前檢查時，Review 用 `gpt-6.1-terra · medium`，T1 用 `gpt-6.1-terra · high`，提供不同模型家族的程式審查。 |
 | T3 大量資料整理／研究，或小型常規檢查 | `gemini-3.8-flash-low · low`。需要整合較多線索時用 `gemini-3.8-flash-medium · medium`。 |
 | T2 核心邏輯／跨模組高風險 Review | `gemini-4-argon-medium · medium`。跨模組交互複雜時用 `gemini-4-argon-high · high`。 |
 | T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `sonnet · high`、`opus · high` 或 `gemini-4-argon-high · high`，依所需視角與深度選擇。 |
@@ -79,7 +80,7 @@ GPT 系列（例如 `gpt-6.1-terra`、`gpt-6-luna`）走 `codex-exec`，effort �
 **主控是 Codex 時，卡片不主動建議 `codex-exec`**（同家族，缺少異質視角），只有使用者明確指定 GPT 模型時才用。
 
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
-這類任務一般建議 `gemini-4-argon-high · high`，Claude Code 的 GPT 選項依下方規則。使用者手打指定時不受此限。
+這類任務一般建議 `gemini-4-argon-high · high`，Claude Code 的 GPT 選項依上表。使用者手打指定時不受此限。
 
 依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。
 
@@ -89,7 +90,7 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 
 核准後嚴禁自動從 Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
 
-主控是 Claude Code，且一般 Review 或 T1 第二意見符合 Context-Bundle 時，若本機 `codex debug models` 確認對應 GPT 可用、兩個 Adapter 均通過出卡前檢查，則【建議模型】與選項 2 用 GPT（Review 用 `gpt-6.1-terra · medium`，T1 第二意見用 `gpt-6.1-terra · high`），選項 3 用 `gemini-4-argon-high · high`。
+符合上表的 Claude Code 主控條件時，【建議模型】與選項 2 用表中的 GPT，選項 3 用 `gemini-4-argon-high · high`。
 其他情況，選項 2 顯示與卡片相同的建議模型。若選項 2 是 Argon 或 Claude，選項 3 用
 `gemini-3.8-flash-low · low` 供節省額度。若選項 2 是 Flash Low 或 Flash Medium，
 選項 3 用 `gemini-4-argon-high · high` 供一鍵升級。
@@ -119,8 +120,11 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 | Claude Opus 5.5 | `claude-opus-5-5-low` | `claude-opus-5-5-medium` | `claude-opus-5-5-high` |
 | Claude Sonnet（`claude-print`） | `sonnet` + `--effort low` | `sonnet` + `--effort medium` | `sonnet` + `--effort high` |
 | Claude Opus（`claude-print`） | `opus` + `--effort low` | `opus` + `--effort medium` | `opus` + `--effort high` |
+| GPT 6.1 Terra（`codex-exec`） | `gpt-6.1-terra` + `--effort low` | `gpt-6.1-terra` + `--effort medium` | `gpt-6.1-terra` + `--effort high` |
+| GPT 6.1 Sol（`codex-exec`） | `gpt-6.1-sol` + `--effort low` | `gpt-6.1-sol` + `--effort medium` | `gpt-6.1-sol` + `--effort high` |
+| GPT 6 Luna（`codex-exec`） | `gpt-6-luna` + `--effort low` | `gpt-6-luna` + `--effort medium` | `gpt-6-luna` + `--effort high` |
 
-上表前四列是 `agy-print` 的模型 ID；後兩列是 `claude-print` 的寫法，模型用名稱、effort 另用 `--effort` 指定。
+`agy-print` 的模型 ID 帶有 effort 尾綴。`claude-print` 和 `codex-exec` 的模型 ID 固定，effort 另用 `--effort` 指定。
 只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
 指定 GPT 模型（例如「用 luna」、「換 gpt-6.1-terra」）時用 `codex-exec`，模型寫完整 ID（`luna` 即 `gpt-6-luna`），
 effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過的 GPT 模型：`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；帳號實際可用的模型仍以本機 `codex debug models` 為準。
