@@ -38,6 +38,26 @@ def _bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")
 
 
+LEDGER_TEXT_CHARS = 200
+
+
+def _ledger_text(value):
+    """An observed single-line value for the Ledger columns; "unknown", empty or malformed values are NULL."""
+    if (not isinstance(value, str) or not value.strip() or value == "unknown" or len(value) > LEDGER_TEXT_CHARS
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)):
+        return None
+    return value
+
+
+def record_observation(db, run_id, observed):
+    """Write model_observed and effort_observed once (COALESCE), inside the caller's collect transaction."""
+    observed = observed or {}
+    model, effort = (_ledger_text(observed.get(key)) for key in ("model_observed", "effort_observed"))
+    if model is not None or effort is not None:
+        db.execute("""UPDATE runs SET model_observed = COALESCE(model_observed, ?),
+                      effort_observed = COALESCE(effort_observed, ?) WHERE run_id = ?""", (model, effort, run_id))
+
+
 SAVED_EVIDENCE_ERROR_CHARS = 1000
 TRUNCATED_MARKER = " …[truncated]… "
 
@@ -144,6 +164,11 @@ class RunManager:
                     timeout_seconds=metadata.get("timeout_s"),
                 )
                 _publish(directory / "invocation.json", invocation)
+                # Written once at the claim; receipts are unchanged and terminal Runs are never backfilled.
+                version = _ledger_text(metadata.get("cli_version"))
+                if version is not None:
+                    db.execute("UPDATE runs SET cli_version = COALESCE(cli_version, ?) WHERE run_id = ?",
+                               (version, run_id))
             owner = self._process(getpid())
             self._change(db, run, "LAUNCHING", evidence={"process": owner})
             return scope

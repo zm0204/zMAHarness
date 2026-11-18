@@ -17,7 +17,7 @@ from ..db import transaction
 from ..ledger import (AGY_OUTPUT_CONFLICT, PRE_SUBMIT_REASONS, READ_ONLY_TEMPLATES, TARGET_ID, TEMPLATE_TIMEOUTS,
                       TERMINAL_STATES, TEMPLATES,
                       LedgerError, valid_id)
-from ..run_manager import _bytes, _publish, _read
+from ..run_manager import _bytes, _publish, _read, record_observation
 from ..verifier import Verifier, requirements_for
 # Shared helpers, re-exported under their historical names (imports and test patch targets use them).
 from .cli_common import (CAPTURE_STATES, WORKER_ENV, InvocationPlan, _bundle_workspace_snapshot,  # noqa: F401
@@ -582,7 +582,8 @@ class AgyPrintAdapter(CliWorkerAdapter):
             _publish(receipt_path, serialized)
             for name, content in files.items():
                 _publish(directory / name, content)
-            run = self._apply(db, run, state, reason, result, conversation, receipt)
+            record_observation(db, run_id, observed)
+            run = self._apply(db, manager._run(db, run_id), state, reason, result, conversation, receipt)
             return manager._summary(db, run) | {"agy_capture": receipt}
 
     def _recollect_output(self, db, run, capture, observed, tool_reason, original, process_sha):

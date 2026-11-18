@@ -153,7 +153,8 @@ agy 保留自己的 `probe`、`prepare_invocation`／`build_invocation`、`colle
 
 - **agy 搬到共用基底（已完成）。** `AgyPrintAdapter` 已繼承 `CliWorkerAdapter`，重複的程序核心已刪除；`tests/v2/test_agy_golden.py` 的黃金 Run 目錄鎖定搬移前後的位元組。
 - **退款證據通用化（已完成）。** 帳本退款判斷同時接受 `capture_sha256` 與 `agy_capture_sha256`。`claude-print` 目前仍未開啟 `refunds_unstarted_process`，開啟需要另外決定。
-- **帳本欄位與暫存檔。** CLI Worker 的帳本 `runs.model_observed`、`runs.cli_version` 目前為 null（實際值記在收據的 `observation` 與 `cli_version`），Run 目錄也會留下 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`。這兩項延到「agy 搬上共用基底」的重構階段一起處理。
+- **帳本欄位（已完成）。** `RunManager.claim_launch` 在發布 `invocation.json` 的同一個交易內，把它的 `cli_version` 寫進 `runs.cli_version`；收集時把收據 `observation` 的 `model_observed`、`effort_observed` 寫進同名欄位。兩者都只寫一次（`COALESCE`），值為 `"unknown"` 時維持 null（agy 一律回報 unknown，所以 agy 的這兩欄是 null）。已結束的舊 Run 不回填，收據位元組不變。
+- **`.pending` 串流刻意保留。** `<prefix>.stdout.pending`、`<prefix>.stderr.pending` 是 `<prefix>.process.json` 雜湊所指的原始封存來源，`collect_saved` 每次都讀它們來核對，所以收集後不刪除；與 `<prefix>.stdout.json`、`<prefix>.stderr.txt` 位元組相同，佔用通常只有數 KB。日後由清理指令連同整個 Run 目錄一起刪除。
 
 ### 開源前修補階段延後的待辦
 
@@ -161,5 +162,4 @@ agy 保留自己的 `probe`、`prepare_invocation`／`build_invocation`、`colle
 - **終止整個 Worker 程序樹。** 逾時或主控程序結束時，目前只終止 Worker 本身；改用 Windows Job Object，讓子程序一併結束。
 - **清理指令。** 實作 Disposable Worktree 登記（`git worktree`）、快照提交與 Run 目錄的清理指令，並接上 `privacy.retain_run_dirs_days`（目前尚未實作，不會自動清理）。
 - **卡片綁定快照 HEAD。** Disposable Worktree 卡片改為同時綁定快照提交的 HEAD，而不只綁定工作目錄身分與任務 SHA-256。
-- **帳本 `model_observed`、`cli_version` 寫入與 `.pending` 殘留**：同上一項，排在 agy 搬上共用基底的重構階段。
 - **收據雜湊鏈沒有金鑰。** 屬於同一 Windows 帳號下的已知限制，見 [DISCLAIMER.md](../DISCLAIMER.md)。

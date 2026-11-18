@@ -24,7 +24,7 @@ from ..context_bundle import _workspace_snapshot, _worktree_baseline, bundle_man
 from ..db import transaction
 from ..ledger import (AGY_OUTPUT_CONFLICT, READ_ONLY_TEMPLATES, TARGET_ID, TEMPLATE_TIMEOUTS, TERMINAL_STATES,
                       LedgerError, event, require_bound_workspace, timestamp, valid_id)
-from ..run_manager import _bytes, _publish, _read, _result_document
+from ..run_manager import _bytes, _publish, _read, _result_document, record_observation
 from ..verifier import Verifier, _template_valid, requirements_for
 from .cli_common import (CAPTURE_STATES, InvocationPlan, _bundle_workspace_snapshot, _count, _invocation_snapshot,
                          _json, _require_bundle_directory, _response_agrees, _response_schema)
@@ -697,7 +697,8 @@ class CliWorkerAdapter:
             _publish(receipt_path, serialized)
             for name, content in files.items():
                 _publish(directory / name, content)
-            run = self._apply(db, run, state, reason, result, conversation, receipt)
+            record_observation(db, run_id, observed)
+            run = self._apply(db, manager._run(db, run_id), state, reason, result, conversation, receipt)
             return manager._summary(db, run) | {summary_key: receipt}
 
     def _apply(self, db, run, state, reason, result, conversation, receipt):
