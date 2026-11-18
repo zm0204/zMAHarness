@@ -1,14 +1,12 @@
 """Launch and collect the official agy print CLI under an existing grant."""
 
 from dataclasses import asdict, dataclass
-import errno
 from hashlib import sha256
 from math import isfinite
 import os
 from pathlib import Path
 import re
 from ..executable_path import which
-import signal
 import subprocess
 from subprocess import Popen
 from time import monotonic
@@ -18,13 +16,14 @@ from ..context_bundle import _workspace_snapshot, _worktree_baseline, bundle_man
 from ..db import transaction
 from ..ledger import (AGY_OUTPUT_CONFLICT, PRE_SUBMIT_REASONS, READ_ONLY_TEMPLATES, TARGET_ID, TEMPLATE_TIMEOUTS,
                       TERMINAL_STATES, TEMPLATES,
-                      LedgerError, event, require_bound_workspace, timestamp, valid_id)
-from ..run_manager import _bytes, _publish, _read, _result_document
-from ..verifier import Verifier, _template_valid, requirements_for
+                      LedgerError, valid_id)
+from ..run_manager import _bytes, _publish, _read
+from ..verifier import Verifier, requirements_for
 # Shared helpers, re-exported under their historical names (imports and test patch targets use them).
 from .cli_common import (CAPTURE_STATES, WORKER_ENV, InvocationPlan, _bundle_workspace_snapshot,  # noqa: F401
                          _contains_object, _count, _invalid_constant, _json, _object_sequence_final,
                          _require_bundle_directory, _response_agrees, _response_schema, _text, _unique_fields, _uuid)
+from .cli_worker import CliLaunchHandle, CliWorkerAdapter
 
 
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens", "total_tokens")
@@ -88,18 +87,8 @@ def _check_readonly_flags(plan):
         raise LedgerError(17, f"agy {label} session settings differ from the fixed profile")
 
 
-@dataclass(frozen=True)
-class LaunchHandle:
-    plan: InvocationPlan
-    process: Popen | None
-    process_identity: dict | None
-    started_at: str
-    clock_started: float
-    launch_error: str | None = None
-
-    @property
-    def pid(self):
-        return self.process.pid if self.process is not None else None
+# Tests and recovery tools build handles positionally; launch_detail keeps its default.
+LaunchHandle = CliLaunchHandle
 
 
 def normalize_stdout(raw):
@@ -243,23 +232,36 @@ def _replay_receipt(run, original, result_sha256):
                    "result_sha256": result_sha256})
 
 
-class AgyPrintAdapter:
-    """Synchronous official agy print Adapter with resumable local evidence."""
+class AgyPrintAdapter(CliWorkerAdapter):
+    """Synchronous official agy print Adapter with resumable local evidence.
+
+    launch, observe, persist_capture, collect_saved, _classify and _apply come from CliWorkerAdapter. agy keeps
+    its own probe, invocation (the prompt is the last argument, not stdin), log-file submission evidence,
+    pre-submit refund, structured-output replay and collect, so its receipts stay byte for byte the same.
+    """
 
     id = "agy-print"
-
-    def __init__(self, manager, *, command=None, max_task_bytes=32768):
-        self.manager = manager
-        self.command = command
-        self.max_task_bytes = max_task_bytes
-
-    @classmethod
-    def from_config(cls, manager, config):
-        command = config.values["adapters"]["agy_command"]
-        # A single executable path relative to the local TOML, or a command on PATH.
-        if Path(command).is_absolute() or "/" in command or chr(92) in command:
-            command = str((config.path.parent / Path(command)).resolve())
-        return cls(manager, command=command, max_task_bytes=config.values["limits"]["max_task_bytes"])
+    prefix = "agy"
+    capture_reason = "agy_capture_integrity"
+    efforts = AGY_EFFORTS
+    command_setting = "agy_command"
+    prompt_via_stdin = False
+    replays_output = True
+    evidence_key = "agy_capture_sha256"
+    conversation_reason = "agy_conversation_observed"
+    messages = {
+        "reservation_mismatch": "agy invocation does not match its reservation",
+        "timeout": "agy timeout exceeds template limits",
+        "changed_before_launch": "agy worker directory changed before launch",
+        "bundle_grant": "agy Context-Bundle requires a grant limited to one dispatch",
+        "bundle_changed_after_claim": "agy Bundle workspace changed after launch claim",
+        "worktree_changed_after_claim": "agy disposable worktree changed after launch claim",
+        "receipt_other_run": "agy process receipt belongs to a different run",
+        "receipt_streams": "agy process receipt does not match its streams",
+        "replay_receipt_missing": "Output replay requires the sealed agy process receipt",
+    }
+    # The registry calls the module function; the base classmethod knows no replay receipt.
+    capture_matches = staticmethod(capture_matches)
 
     def _executable(self):
         command = which(str(self.command)) if self.command else None
@@ -275,13 +277,6 @@ class AgyPrintAdapter:
         if not executable.is_file() or (os.name == "nt" and executable.suffix.lower() != ".exe"):
             raise LedgerError(14, "agy must resolve to a native executable")
         return executable
-
-    def find_executable(self):
-        """Read-only lookup for preflight: the resolved executable, or None. Never runs it."""
-        try:
-            return self._executable()
-        except (LedgerError, OSError):
-            return None
 
     def probe(self, *, cwd=None):
         """Probe local binary capabilities without auth or inference."""
@@ -401,106 +396,46 @@ class AgyPrintAdapter:
         return InvocationPlan(run_id, argv, cwd, kind, timeout_s, _bytes(metadata), baseline, task_sha,
                               model, effort, template)
 
-    def launch(self, plan):
-        # The claim is the sole Popen boundary, also when called directly via the Adapter.
-        _check_readonly_flags(plan)
-        run = self.manager.ledger.get_run(plan.run_id)
-        if run is None or (run["adapter"], run["template"], run["model_requested"], run["effort_requested"],
-                           run["task_sha256"], Path(run["workspace_path"]), run["workspace_kind"]) != (
-                self.id, plan.template, plan.model, plan.effort, plan.task_sha256, plan.cwd, plan.workspace_kind):
-            raise LedgerError(10, "agy invocation does not match its reservation")
-        directory = self.manager._directory(plan.run_id)
-        metadata = _json(plan.metadata)
-        task = _read(directory / "task.md")
-        if not 1 <= plan.timeout_s <= TEMPLATE_TIMEOUTS[plan.template]:
-            raise LedgerError(2, "agy timeout exceeds template limits")
-        if plan.workspace_kind == "read_only":
-            _require_bundle_directory(plan.cwd, Path(run["repo_root"]), self.manager.database.parent)
-        baseline, status = _invocation_snapshot(plan)
-        if status or baseline != plan.baseline:
-            raise LedgerError(20, "agy worker directory changed before launch")
-        expected = self.build_invocation(
-            run_id=plan.run_id, template=run["template"], model=run["model_requested"],
-            effort=run["effort_requested"], task=task, task_text=task.decode("utf-8-sig"),
-            cwd=plan.cwd, directory=directory, timeout_s=plan.timeout_s, executable=self._executable(),
-            baseline=baseline, cli_version=metadata["cli_version"],
-            requirements=requirements_for(metadata["verification_requirements"]),
-        )
-        if expected != plan:
-            raise LedgerError(20, "agy launch arguments do not match the prepared invocation")
-        if plan.workspace_kind == "read_only":
-            grant = self.manager.ledger.get_grant(run["grant_id"])
-            if grant is None or grant["max_dispatches"] != 1:
-                raise LedgerError(10, "agy Context-Bundle requires a grant limited to one dispatch")
-        scope = self.manager.claim_launch(plan.run_id, invocation=plan.metadata)
-        started_at = timestamp(self.manager.ledger.clock())
-        clock_started = monotonic()
-        with (directory / "agy.stdout.pending").open("xb") as stdout, (
-            directory / "agy.stderr.pending"
-        ).open("xb") as stderr:
-            try:
-                require_bound_workspace(plan.cwd, scope)
-                if plan.workspace_kind == "read_only":
-                    _require_bundle_directory(plan.cwd, Path(run["repo_root"]), self.manager.database.parent)
-                    if _bundle_workspace_snapshot(plan.cwd) != (plan.baseline, False):
-                        raise LedgerError(20, "agy Bundle workspace changed after launch claim")
-                elif plan.workspace_kind == "disposable_worktree":
-                    if _workspace_snapshot(plan.cwd) != (plan.baseline, b""):
-                        raise LedgerError(20, "agy disposable worktree changed after launch claim")
-            except (LedgerError, OSError) as exc:
-                self.manager.ledger.transition(plan.run_id, "LAUNCHING", "SUBMISSION_UNKNOWN")
-                raise LedgerError(21, "Worker directory changed after launch claim; preserve the run for review") from exc
-            try:
-                process = Popen(plan.argv, cwd=plan.cwd, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                                env=_worker_environment(), shell=False)
-            except OSError as exc:
-                confirmed = (exc.errno in (errno.ENOENT, errno.EACCES, errno.ENOEXEC)
-                             or getattr(exc, "winerror", None) in (2, 3, 5, 193))
-                error = "process_not_started" if confirmed else "process_launch_unknown"
-                return LaunchHandle(plan, None, None, started_at, clock_started, error)
-        try:
-            identity = self.manager.mark_running(plan.run_id, pid=process.pid)
-        except LedgerError:
-            # A very short-lived process may already be gone when its creation identity is queried.
-            identity = {"pid": process.pid, "identity": None}
-        return LaunchHandle(plan, process, identity, started_at, clock_started)
+    # ---- CliWorkerAdapter hooks ---------------------------------------------------------------------
+    def resolve_executable(self):
+        return self._executable()
 
-    def observe(self, handle):
-        """Wait locally once until exit or the approved deadline, then seal any log evidence."""
-        process = handle.process
-        termination = "exited"
-        exit_code = None
-        if process is None:
-            termination = "not_started" if handle.launch_error == "process_not_started" else "interrupted"
-        else:
-            try:
-                remaining = max(0, handle.clock_started + handle.plan.timeout_s - monotonic())
-                exit_code = process.wait(timeout=remaining)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                exit_code = process.poll()
-                if exit_code is None:
-                    termination = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "interrupted"
-                    try:
-                        process.kill()
-                    except OSError:
-                        if process.poll() is None:
-                            raise
-                    exit_code = process.wait(timeout=5)
-            if termination == "exited" and (exit_code in (-signal.SIGINT, -signal.SIGTERM)
-                                            or exit_code & 0xFFFFFFFF == 0xC000013A):
-                termination = "interrupted"
-        wall_milliseconds = round((monotonic() - handle.clock_started) * 1000)
+    def worker_environment(self):
+        return _worker_environment()
+
+    def normalize_stdout(self, raw):
+        return normalize_stdout(raw)
+
+    def check_readonly(self, plan):
+        _check_readonly_flags(plan)
+
+    def _guard_argv(self, plan):
+        # agy is checked by its fixed read-only profile only, as before the move onto the base.
+        _check_readonly_flags(plan)
+
+    def invocation_mismatch(self):
+        return LedgerError(20, "agy launch arguments do not match the prepared invocation")
+
+    def _bundle_directory(self, cwd, repo):
+        _require_bundle_directory(cwd, repo, self.manager.database.parent)
+
+    # This module's names are looked up at call time, so patches of agy_print.Popen, _invocation_snapshot
+    # and monotonic keep applying to the shared lifecycle.
+    def _spawn(self, argv, **options):
+        return Popen(argv, **options)
+
+    def _snapshot(self, plan):
+        return _invocation_snapshot(plan)
+
+    def _clock(self):
+        return monotonic()
+
+    def make_capture(self, handle, *, exit_code, termination, wall_milliseconds, after):
+        """After a timeout or interruption without a stdout status, seal the run-local CLI log evidence."""
         directory = self.manager._directory(handle.plan.run_id)
-        after = None
-        if process is not None:
-            try:
-                after, _ = _invocation_snapshot(handle.plan)
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                pass
-        changed = None if after is None else after != handle.plan.baseline
         stdout = _read(directory / "agy.stdout.pending")
         log_submission = None
-        if process is not None and termination in ("timeout", "interrupted"):
+        if handle.process is not None and termination in ("timeout", "interrupted"):
             observed = normalize_stdout(stdout)
             if not (observed and observed["raw_status"]):
                 log_submission = _log_submission(directory / "agy.cli.log")
@@ -508,13 +443,11 @@ class AgyPrintAdapter:
             handle.plan.run_id, handle.plan.task_sha256, sha256(handle.plan.metadata).hexdigest(),
             stdout, _read(directory / "agy.stderr.pending"), exit_code,
             termination=termination, pre_submit_reason=handle.launch_error if termination == "not_started" else None,
-            wall_milliseconds=wall_milliseconds, workspace_changed=changed, workspace_after_sha256=after,
-            log_submission=log_submission,
+            wall_milliseconds=wall_milliseconds, workspace_changed=None if after is None else after != handle.plan.baseline,
+            workspace_after_sha256=after, log_submission=log_submission,
         )
 
-    def persist_capture(self, handle, capture):
-        """Seal stream hashes before normalization so recovery never needs to relaunch."""
-        directory = self.manager._directory(capture.run_id)
+    def process_record(self, handle, capture):
         record = asdict(capture)
         if capture.log_submission is None:
             record.pop("log_submission")
@@ -523,31 +456,26 @@ class AgyPrintAdapter:
         record["process"] = handle.process_identity
         record["started_at"] = handle.started_at
         record["launch_error"] = handle.launch_error
-        _publish(directory / "agy.process.json", _bytes(record))
+        return record
 
-    def collect_saved(self, run_id, *, replay_output=False):
-        """Recover an already sealed observation. This entry point cannot start a process."""
-        directory = self.manager._directory(run_id)
-        try:
-            raw_receipt = _read(directory / "agy.process.json")
-            record = _json(raw_receipt)
-        except FileNotFoundError:
-            if replay_output:
-                raise LedgerError(30, "Output replay requires the sealed agy process receipt") from None
-            return self.manager.collect(run_id)
-        if record["run_id"] != run_id:
-            raise LedgerError(30, "agy process receipt belongs to a different run")
-        capture = {}
-        for name in ("stdout", "stderr"):
-            data = _read(directory / f"agy.{name}.pending")
-            if sha256(data).hexdigest() != record[name]:
-                raise LedgerError(30, "agy process receipt does not match its streams")
-            capture[name] = data
+    def capture_from_record(self, directory, record, streams):
         for key in ("process", "started_at", "launch_error"):
             record.pop(key)
         record["tool_events"] = tuple(record["tool_events"])
-        return self.collect(run_id, AgyCapture(**(record | capture)),
-                            process_receipt_sha256=sha256(raw_receipt).hexdigest(), replay_output=replay_output)
+        return AgyCapture(**(record | streams))
+
+    def collect_sealed(self, run_id, capture, *, process_receipt_sha256, replay_output):
+        return self.collect(run_id, capture, process_receipt_sha256=process_receipt_sha256,
+                            replay_output=replay_output)
+
+    def not_started_outcome(self, capture):
+        return "FAILED_PRE_SUBMIT", capture.pre_submit_reason
+
+    def extra_submission(self, capture):
+        return capture.log_submission is not None
+
+    def readonly_violation(self, capture, run):
+        return capture.workspace_changed is True and run["template"] != "delegate-implement"
 
     def classify_failure(self, exit_code, stderr, events):
         """Only the sealed observer classification can support a refund."""
@@ -564,62 +492,6 @@ class AgyPrintAdapter:
             receipt = {}
         return {"has_done": self.manager._completion(run)[0] == "verified", "conversation_exists": None,
                 "workspace_changed": receipt.get("workspace_changed"), "notes": "Local evidence only"}
-
-    def _classify(self, capture, observed, run, tool_reason):
-        if capture.termination == "not_started":
-            return "FAILED_PRE_SUBMIT", capture.pre_submit_reason, None
-        if tool_reason in ("required_action_denied", "required_action_failed"):
-            return "FAILED", tool_reason, None
-        if capture.workspace_changed is True and run["template"] != "delegate-implement":
-            return "FAILED", "readonly_violation", None
-        submitted = run["conversation_id"] or capture.log_submission or (
-            observed and observed["conversation_id"] and (observed["num_turns"] or 0) > 0
-        )
-        if not submitted:
-            return "SUBMISSION_UNKNOWN", "submission_evidence_missing", None
-        if capture.termination == "timeout" or capture.log_submission is not None:
-            return "TIMED_OUT", "process_timed_out", None
-        if capture.termination != "exited" or capture.exit_code is None:
-            return "SUBMISSION_UNKNOWN", "process_completion_unknown", None
-        if capture.exit_code != 0:
-            return "FAILED", "process_failed", None
-        if observed is None or not observed["raw_status"]:
-            return "FAILED", "schema_invalid", None
-        if observed["raw_status"] != "SUCCESS":
-            return "FAILED", "worker_status_not_success", None
-        response = observed["response"]
-        structured = "structured_output" in observed
-        if not structured:
-            if not response or not response.strip():
-                return "FAILED", "schema_invalid", None
-            if not response.lstrip().startswith(("{", "[")):
-                return "COLLECTING", "structured_result_missing", None
-        try:
-            result = observed["structured_output"] if structured else _json(response)
-            valid = _result_document(_bytes(result), run, self.manager.max_summary_chars)
-            if valid is not None and not _template_valid(run["template"], valid["template_payload"]):
-                valid = None
-        except (ValueError, RecursionError):
-            valid = None
-        if valid is None:
-            return "FAILED", "schema_invalid", None
-        if structured:
-            expected_schema = _response_schema(run["run_id"], run["template"], self.manager.max_summary_chars)
-            if "json_schema" in observed:
-                try:
-                    if _bytes(observed["json_schema"]) != _bytes(expected_schema):
-                        return "FAILED", "schema_invalid", None
-                except (ValueError, RecursionError):
-                    return "FAILED", "schema_invalid", None
-            if observed.get("response_invalid") or not _response_agrees(
-                response, valid, observed.get("json_schema"), expected_schema,
-            ):
-                return "FAILED", AGY_OUTPUT_CONFLICT, None
-        if valid["status"] in ("failed", "blocked"):
-            return "FAILED", "worker_" + valid["status"], None
-        if run["workspace_kind"] == "read_only" and capture.workspace_changed is None:
-            return "COLLECTING", "bundle_workspace_evidence_missing", None
-        return "COLLECTING", "structured_result_collected", valid
 
     def collect(self, run_id, capture, *, process_receipt_sha256=None, replay_output=False):
         """Consume an already captured local process receipt. This method cannot launch."""
@@ -743,50 +615,4 @@ class AgyPrintAdapter:
                                    result_sha256=result_sha)
         _publish(directory / "agy.replay.json", replay)
         self.manager._publish_result(run, result)
-        return run
-
-    def _apply(self, db, run, state, reason, result, conversation, receipt):
-        manager = self.manager
-        current = run["state"]
-        if current in TERMINAL_STATES:
-            return run
-        evidence = {"agy_capture_sha256": sha256(_bytes(receipt)).hexdigest()}
-        exit_code = receipt["exit_code"]
-        if state in ("FAILED_PRE_SUBMIT", "SUBMISSION_UNKNOWN"):
-            if current in ("LAUNCHING", "RUNNING"):
-                return manager._change(db, run, state, reason=reason, evidence=evidence, exit_code=exit_code)
-            return run
-        if current == "LAUNCHING":
-            if conversation is None:
-                run = manager._change(db, run, "SUBMISSION_UNKNOWN", reason="missing_launch_receipt")
-            else:
-                run = manager._change(db, run, "RUNNING", reason="agy_conversation_observed",
-                                      evidence=evidence, conversation_id=conversation)
-            current = run["state"]
-        if state == "TIMED_OUT":
-            if current == "SUBMISSION_UNKNOWN" and conversation is not None:
-                run = manager._change(db, run, "RUNNING", reason="agy_conversation_observed",
-                                      evidence=evidence, conversation_id=conversation)
-            if run["state"] == "RUNNING":
-                return manager._change(db, run, state, reason=reason, evidence=evidence,
-                                       conversation_id=conversation, exit_code=exit_code)
-            return run
-        if state == "FAILED" and current in ("SUBMISSION_UNKNOWN", "TIMED_OUT"):
-            return manager._change(db, run, state, reason=reason, evidence=evidence,
-                                   conversation_id=conversation, exit_code=exit_code)
-        if current != "COLLECTING":
-            run = manager._change(db, run, "COLLECTING", reason=reason, evidence=evidence,
-                                  conversation_id=conversation, exit_code=exit_code,
-                                  result_sha256=receipt["result_sha256"])
-        elif result is not None and (run["exit_code"] is None or
-                                     (run["conversation_id"] is None and conversation is not None)):
-            # Recovery can see DONE before the original SQLite transaction is committed.
-            db.execute("UPDATE runs SET exit_code = ?, conversation_id = COALESCE(conversation_id, ?) WHERE run_id = ?",
-                       (exit_code, conversation, run["run_id"]))
-            event(db, run["run_id"], timestamp(manager.ledger.clock()), current, current, evidence, actor="adapter")
-            run = manager._run(db, run["run_id"])
-        if state == "FAILED":
-            return manager._change(db, run, state, reason=reason, evidence=evidence)
-        if result is not None:
-            manager._publish_result(run, result)
         return run

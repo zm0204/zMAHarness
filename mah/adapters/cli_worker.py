@@ -1,8 +1,8 @@
 """Shared flow for read-only Workers that run an external CLI as a local subprocess.
 
-The lifecycle (launch, observe, persist_capture, collect_saved, classification and state changes) was
-ported once from AgyPrintAdapter and parameterized by a receipt file prefix. agy_print.py itself is left
-unchanged on purpose; a later pure-refactor phase moves agy onto this base under its existing tests.
+The lifecycle (launch, observe, persist_capture, collect_saved, classification and state changes) is
+parameterized by a receipt file prefix and is shared by every CLI Worker, AgyPrintAdapter included; the
+optional hooks keep each Adapter's receipts byte for byte.
 
 Subclasses provide only: the receipt prefix, executable resolution, required flags, the argument
 vector, the read-only argument check, the worker environment, the stdout normalizer and the
