@@ -98,7 +98,7 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 ## 本機設定與故障排除
 
 - **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits，略過派工前後的額度查詢。
-- **舊資料清理**：不會自動清理。執行 `mah cleanup` 列出超過 `privacy.retain_run_dirs_days`（預設 30 天，可用 `--older-than-days N` 覆寫）的 Run 目錄與 Disposable Worktree；預設只列出（JSON），不寫入任何東西，確認清單後加 `--apply` 才會刪除，刪除無法復原。設定值 `0` 代表停用：只能列出，`--apply` 以結束碼 2 拒絕。
+- **舊資料清理**：不會自動清理。執行 `mah cleanup` 列出超過 `privacy.retain_run_dirs_days`（預設 30 天，可用 `--older-than-days N` 覆寫）的 Run 目錄與 Disposable Worktree；預設只列出（JSON），不寫入任何東西，確認清單後加 `--apply` 才會刪除，刪除無法復原。設定值 `0` 代表停用：只能列出，`--apply` 以結束碼 2 拒絕。`doctor.ps1` 會顯示目前可清理的 Run、Worktree 數量與大約佔用空間（只統計，不刪除）。
   - 只刪除已結束、而且已採納或拒絕（`accept`／`reject-result`）的 Run；`FAILED`、`FAILED_PRE_SUBMIT`、`CANCELLED`、`ABANDONED` 不需要採納決定。未結束的 Run、成功但尚未採納或拒絕的 Run、未到期的 Run 一律保留，清單會寫出原因。
   - Disposable Worktree 只在路徑是 `worktrees\<run_id>`、而且 HEAD 仍是快照提交或派工時的提交時，才以 `git worktree remove` 移除；不符合時 Worktree 和 Run 目錄都保留（`worktree_present`）。沒有 Run 紀錄的孤兒 Worktree 也會列出，只有快照提交訊息相符的才會移除。
   - Run 目錄或其中任何項目是符號連結或 junction 時拒絕刪除。帳本紀錄保留，刪除後 `mah status <run_id>` 仍可查詢（`task_evidence` 會是 `missing`）。

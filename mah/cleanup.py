@@ -21,11 +21,12 @@ from os.path import normcase
 from pathlib import Path
 import shutil
 import stat
+from types import SimpleNamespace
 
 from .context_bundle import _git, _git_path, _head
 from .db import connect
 from .ledger import RUN_ID, TERMINAL_STATES, LedgerError, timestamp, utc_now, valid_id
-from .run_manager import _read
+from .run_manager import RunManager, _read
 
 UNACCEPTED_CLEANABLE = {"FAILED", "FAILED_PRE_SUBMIT", "CANCELLED", "ABANDONED"}
 WORKTREE_KINDS = {"worktree", "disposable_worktree"}
@@ -259,3 +260,17 @@ class Cleanup:
 
 def cleanup(manager, config, *, older_than_days=None, apply=False):
     return Cleanup(manager, config, older_than_days=older_than_days, apply=apply).run()
+
+
+def read_only_manager(config):
+    """A Run Manager over the existing Ledger that never creates, migrates or writes it; None without one.
+    Cleanup only reads the runs table, so it needs no GrantLedger initialization."""
+    if not config.database.is_file():
+        return None
+    return RunManager(SimpleNamespace(database=config.database, clock=utc_now))
+
+
+def doctor_summary(config):
+    """Counts for doctor.ps1: what `mah cleanup --apply` would remove right now. Never deletes anything."""
+    report = cleanup(read_only_manager(config), config)
+    return report["summary"] | {"older_than_days": report["older_than_days"], "disabled": report["disabled"]}

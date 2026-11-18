@@ -318,11 +318,10 @@ def main(argv=None):
             require_unsandboxed_dispatch(config.database.parent)
         if args.group == "cleanup":
             # No scan and no new state: a dry run writes nothing, and an unfinished Run is simply kept.
-            from .cleanup import cleanup
+            from .cleanup import cleanup, read_only_manager
 
-            manager = (RunManager(GrantLedger(config.database, limits=config.ledger_limits))
-                       if config.database.is_file() else None)
-            output(cleanup(manager, config, older_than_days=args.older_than_days, apply=args.apply))
+            output(cleanup(read_only_manager(config), config, older_than_days=args.older_than_days,
+                           apply=args.apply))
             return 0
         config.database.parent.mkdir(parents=True, exist_ok=True)
         ledger = GrantLedger(config.database, limits=config.ledger_limits)

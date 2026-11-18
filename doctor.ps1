@@ -312,6 +312,25 @@ if ($python -and -not $pathsFailed) {
         }
     }
     catch { Report-Check '需人工驗證' 'codex-exec' $_.Exception.Message }
+
+    # 只統計 mah cleanup --apply 現在會刪除的項目；不刪除、不建立也不遷移帳本。
+    try {
+        $cleanupQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import load_config; from mah.cleanup import doctor_summary; print(json.dumps(doctor_summary(load_config(None))))'
+        $cleanupRaw = & (Get-HarnessPathPython) -I -B -c $cleanupQuery $PSScriptRoot
+        if ($LASTEXITCODE -ne 0) { throw '無法統計可清理的舊資料。' }
+        $cleanup = ($cleanupRaw -join "`n") | ConvertFrom-Json
+        $megabytes = [Math]::Round($cleanup.bytes / 1MB, 1)
+        if ($cleanup.runs -eq 0 -and $cleanup.worktrees -eq 0) {
+            $detail = "沒有超過 $($cleanup.older_than_days) 天、可清理的 Run 或 Worktree。"
+        }
+        else {
+            $next = if ($cleanup.disabled) { 'privacy.retain_run_dirs_days = 0，已停用 --apply。' }
+                    else { '先執行 mah cleanup 檢視清單，確認後再加 --apply 刪除。' }
+            $detail = "超過 $($cleanup.older_than_days) 天、可清理的有 $($cleanup.runs) 個 Run 目錄、$($cleanup.worktrees) 個 Worktree，約 $megabytes MB。$next"
+        }
+        Report-Check '通過' '舊資料清理' $detail
+    }
+    catch { Report-Check '需人工驗證' '舊資料清理' $_.Exception.Message }
 }
 
 $skillSource = Join-Path $PSScriptRoot '.agents/skills/zmaharness'

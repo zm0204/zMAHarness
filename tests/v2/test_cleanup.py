@@ -14,12 +14,13 @@ from uuid import uuid4
 
 from mah.adapters import registry
 from mah.adapters.base import AdapterPolicy
-from mah.cleanup import cleanup
+from mah.cleanup import cleanup, doctor_summary, read_only_manager
 from mah.cli import main
 from mah.config import ConfigError, load_config
 from mah.context_bundle import prepare_worktree
 from mah.ledger import LedgerError
 
+import test_cli
 from test_cli_worker import WorkerFixture
 
 GIT = ["git", "-c", "user.name=Harness Test", "-c", "user.email=harness@example.invalid"]
@@ -251,6 +252,27 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
         self.assertTrue(report["prune"][0]["pruned"])
         self.assertNotIn(stale.name, self.registered())
 
+    def test_doctor_summary_counts_without_deleting(self):
+        run_id, workspace, directory = self.make_run()
+        self.make_run("schema", outcome="failed")
+        config = SimpleNamespace(values=self.config().values, database=self.ledger.database)
+        before = tree_state(self.state, self.trees)
+        summary = doctor_summary(config)
+        self.assertEqual((summary["runs"], summary["worktrees"], summary["older_than_days"], summary["disabled"]),
+                         (0, 0, 30, False))
+        self.retain = 0
+        config = SimpleNamespace(values=self.config().values, database=self.ledger.database)
+        summary = doctor_summary(config)
+        self.assertEqual((summary["runs"], summary["worktrees"], summary["disabled"]), (2, 2, True))
+        self.assertGreater(summary["bytes"], 0)
+        self.assertEqual(tree_state(self.state, self.trees), before)
+        self.assertTrue(directory.is_dir() and workspace.is_dir())
+
+    def test_read_only_manager_never_creates_a_ledger(self):
+        missing = SimpleNamespace(database=self.root / "absent" / "ledger.sqlite3")
+        self.assertIsNone(read_only_manager(missing))
+        self.assertFalse((self.root / "absent").exists())
+
     def test_prunable_entry_outside_worktree_root_blocks_prune(self):
         self.make_run()
         outside = self.root / "elsewhere"
@@ -301,6 +323,25 @@ class CleanupCommandTests(unittest.TestCase):
         self.assertEqual(load_config(self.write_config(0)).values["privacy"]["retain_run_dirs_days"], 0)
         with self.assertRaises(ConfigError):
             load_config(self.write_config(-1))
+
+
+class DoctorCleanupTests(test_cli.SkillInstallationTests):
+    def test_doctor_reports_cleanable_data_without_failing(self):
+        self.run_script("setup.ps1")
+        output = self.assert_doctor_passes()
+        line = next(item for item in output.splitlines() if "舊資料清理" in item)
+        self.assertTrue(line.startswith("[通過] 舊資料清理"), output)
+        self.assertIn("30 天", line)
+
+
+def load_tests(loader, tests, pattern):
+    """Run the tests defined here, not the ones DoctorCleanupTests inherits."""
+    suite = unittest.TestSuite()
+    for case in (CleanupTests, CleanupCommandTests, DoctorCleanupTests):
+        for name in loader.getTestCaseNames(case):
+            if name in vars(case):
+                suite.addTest(case(name))
+    return suite
 
 
 if __name__ == "__main__":
