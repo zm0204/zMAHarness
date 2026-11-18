@@ -38,6 +38,18 @@ def _bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")
 
 
+SAVED_EVIDENCE_ERROR_CHARS = 1000
+TRUNCATED_MARKER = " …[truncated]… "
+
+
+def _truncate_error(message, limit=SAVED_EVIDENCE_ERROR_CHARS):
+    """Keep the exception type at the head and the file name at the tail, marking the cut."""
+    if len(message) <= limit:
+        return message
+    head = 100
+    return message[:head] + TRUNCATED_MARKER + message[-(limit - head - len(TRUNCATED_MARKER)):]
+
+
 def _result_document(data, run, max_summary_chars):
     try:
         result = json.loads(data.decode("utf-8"))
@@ -388,13 +400,25 @@ class RunManager:
                 raise LedgerError(2, "--reason is only for --mark-failed and must be a short nonempty text")
             if saved_evidence_error is not None and (action is None or not isinstance(saved_evidence_error, str)):
                 raise LedgerError(2, "Saved evidence errors are recorded only by --mark-failed or --abandon")
-            extra = {} if saved_evidence_error is None else {"saved_evidence_error": saved_evidence_error[:1000]}
+            extra = ({} if saved_evidence_error is None
+                     else {"saved_evidence_error": _truncate_error(saved_evidence_error)})
             # Only a run that was already COLLECTING may be marked failed from there. A result that this
-            # call recovers from SUBMISSION_UNKNOWN or TIMED_OUT still takes priority over a manual failure.
-            was_collecting = run["state"] == "COLLECTING"
+            # call recovers from SUBMISSION_UNKNOWN or TIMED_OUT still takes priority over a manual failure,
+            # unless the sealed Worker evidence is damaged: that result can never be collected, so the
+            # closing action ends the Run in this same call and keeps the error.
+            previous_state = run["state"]
             run = self._reconcile(db, run, resume_observation=action is None)
-            if action == "mark_failed" and was_collecting and run["state"] == "COLLECTING":
+            if action == "mark_failed" and previous_state == "COLLECTING" and run["state"] == "COLLECTING":
                 return self._summary(db, self._mark_collecting_failed(db, run, reason, extra))
+            if (action == "mark_failed" and saved_evidence_error is not None and run["state"] == "COLLECTING"
+                    and previous_state in ("SUBMISSION_UNKNOWN", "TIMED_OUT")):
+                if self._verified_by_report(run):
+                    raise LedgerError(30, "This result has already been verified; run mah verify again instead "
+                                          "of marking it failed")
+                evidence = ({"from_state": "COLLECTING", "recovered_from": previous_state}
+                            | ({"user_reason": reason} if reason is not None else {}) | extra)
+                return self._summary(db, self._change(db, run, "FAILED", reason="user_marked_failed",
+                                                      evidence=evidence))
             if action is not None and run["state"] == "COLLECTING" and self._completion(run)[0] == "verified":
                 return self._summary(db, run)
             if action == "mark_failed" and run["state"] in ("SUBMISSION_UNKNOWN", "TIMED_OUT"):

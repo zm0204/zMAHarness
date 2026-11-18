@@ -21,8 +21,8 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 
 | Worker | 驗收範圍 |
 | --- | --- |
-| Gemini | **真實派工**：T5 觸發 作者的實際 Python 專案（表格比對工具）跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板及 Disposable Worktree 的真實端到端流程尚未驗收。 |
-| Claude（`agy-print`） | Sonnet、Opus 已列為 `agy-print` 的候選模型，真實派工尚未驗收。 |
+| Gemini | **真實派工**：T5 觸發 作者的實際 Python 專案（表格比對工具）跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板的真實端到端流程尚未驗收；Disposable Worktree 的真實端到端流程已由 Claude（`agy-print`）驗收。 |
+| Claude（`agy-print`） | **真實派工已驗收**：`claude-sonnet-5-5-medium`，Disposable Worktree，Review，`SUCCEEDED`／`ACCEPTED`（2026-11-18），審查對象是 zMAHarness 本身。agy 搭配 Claude 時會在 JSON 前面加上說明文字，自 `28d8a9a` 起允許這種輸出。 |
 | Claude（`claude-print`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），`sonnet · medium` 與 `opus · medium`。兩筆皆為 Context-Bundle Review，`SUCCEEDED`／`ACCEPTED`。Opus 於 2026-11-15 驗收，Worker 回報的模型為 `claude-opus-5-5`。 |
 | GPT（`codex-exec`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`。只支援 Context-Bundle。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |

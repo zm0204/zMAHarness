@@ -344,7 +344,7 @@ def prepare_worktree(repo, root, run_id):
     base, changes = _snapshot_paths(repo, head, status)
     index_modes = _snapshot_index_modes(repo)
     filesystem_mode = _git(repo, "config", "--type=bool", "--get", "core.filemode", accepted=(0, 1)).strip()
-    settings = (f"core.hooksPath={os.devnull}", "user.name=MultiAgentHarness", "user.email=mah@invalid.example")
+    settings = (f"core.hooksPath={os.devnull}", "user.name=zMAHarness", "user.email=zmaharness@invalid.example")
     root.mkdir(parents=True, exist_ok=True)
     _git(repo, "worktree", "add", "--detach", "--", str(workspace), head, settings=settings, timeout=60)
     binding = workspace_binding(workspace)

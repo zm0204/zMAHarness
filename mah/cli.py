@@ -326,9 +326,11 @@ def main(argv=None):
             if run is not None and has_factory(run["adapter"]):
                 try:
                     create_adapter(run["adapter"], manager, config).collect_saved(args.run_id)
-                except (FileNotFoundError, LedgerError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                except (OSError, LedgerError, ValueError, KeyError, TypeError) as exc:
                     # Damaged sealed evidence must not trap the Run: the closing actions record the error
-                    # and still end in FAILED or ABANDONED. Every other action stays strict.
+                    # and still end in FAILED or ABANDONED. Every other action stays strict. ValueError
+                    # covers duplicate keys and invalid JSON or UTF-8; KeyError and TypeError a receipt that
+                    # is valid JSON with missing or mistyped fields; OSError permissions and symbolic links.
                     if args.resolution not in ("mark_failed", "abandon") or (
                             isinstance(exc, LedgerError) and exc.code != 30):
                         raise
@@ -388,6 +390,6 @@ def main(argv=None):
     except LedgerError as exc:
         print(f"錯誤：{exc}", file=sys.stderr)
         return exc.code
-    except (OSError, ValueError, TypeError, OverflowError, sqlite3.Error) as exc:
+    except (OSError, ValueError, KeyError, TypeError, OverflowError, sqlite3.Error) as exc:
         print(f"錯誤：{exc}", file=sys.stderr)
         return 2

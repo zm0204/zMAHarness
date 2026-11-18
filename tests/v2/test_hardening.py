@@ -348,6 +348,102 @@ class CollectingResolutionTests(Scratch):
         self.assertEqual(error.exception.code, 2)
         self.assertEqual(self.ledger.get_run(run)["state"], "COLLECTING")
 
+    def interrupted_claude_run(self, state, receipt):
+        """A claude-print Run in SUBMISSION_UNKNOWN or TIMED_OUT whose process receipt holds `receipt` bytes."""
+        run = self.reserve()
+        self.manager.prepare(run, b"task")
+        self.manager.claim_launch(run)
+        self.manager.mark_running(run, pid=os.getpid())
+        if state == "TIMED_OUT":
+            self.manager.timeout(run)
+        else:
+            self.ledger.transition(run, "RUNNING", "SUBMISSION_UNKNOWN")
+        with closing(sqlite3.connect(self.ledger.database)) as db, db:
+            db.execute("UPDATE runs SET adapter = 'claude-print' WHERE run_id = ?", (run,))
+        (self.manager._directory(run) / "claude.process.json").write_bytes(receipt)
+        return run
+
+    def last_detail(self, run):
+        with closing(sqlite3.connect(self.ledger.database)) as db:
+            return json.loads(db.execute("SELECT detail_json FROM run_events WHERE run_id = ? ORDER BY id DESC",
+                                         (run,)).fetchone()[0])
+
+    def assert_strict_paths_refuse(self, run, state):
+        self.assertEqual(self.cli("resolve", run).returncode, 2)
+        self.assertEqual(self.cli("collect", run).returncode, 2)
+        self.assertEqual(self.ledger.get_run(run)["state"], state)
+
+    DAMAGED_RECEIPTS = {
+        "empty_object": (b"{}", "KeyError"),
+        "duplicate_key": (b'{"run_id": "a", "run_id": "b"}', "ValueError: Duplicate JSON field"),
+        "not_json": (b"not json", "JSONDecodeError"),
+        "wrong_type": (b"[]", "TypeError"),
+    }
+
+    def test_damaged_receipts_can_be_marked_failed(self):
+        digest = self.ledger.create_card(
+            "card-receipts", repo_root=self.state, task_key="receipts", trigger_ids=["T2"], prepare_mode="card",
+            allowed_templates=["review"],
+            allowed_targets=[{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "low"}],
+            max_dispatches=len(self.DAMAGED_RECEIPTS), ttl_minutes=10)
+        self.grant = self.ledger.approve("card-receipts", digest, via="manual_cli")
+        for name, (receipt, expected) in self.DAMAGED_RECEIPTS.items():
+            with self.subTest(name):
+                run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", receipt)
+                self.assert_strict_paths_refuse(run, "SUBMISSION_UNKNOWN")
+                resolved = self.cli("resolve", run, "--mark-failed")
+                self.assertEqual(resolved.returncode, 0, resolved.stderr)
+                view = json.loads(resolved.stdout)
+                self.assertEqual((view["state"], view["state_reason"], view["dispatch_consumed"]),
+                                 ("FAILED", "user_marked_failed", 1))
+                self.assertTrue(self.last_detail(run)["saved_evidence_error"].startswith(expected),
+                                self.last_detail(run))
+
+    def test_damaged_receipt_can_be_abandoned_from_submission_unknown(self):
+        run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", b"{}")
+        resolved = self.cli("resolve", run, "--abandon")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        self.assertEqual(json.loads(resolved.stdout)["state"], "ABANDONED")
+        detail = self.last_detail(run)
+        self.assertEqual((detail["reason"], detail["refund"]), ("user_abandoned", False))
+        self.assertTrue(detail["saved_evidence_error"].startswith("KeyError"))
+
+    def test_damaged_receipt_can_be_marked_failed_from_timed_out(self):
+        run = self.interrupted_claude_run("TIMED_OUT", b"{}")
+        self.assert_strict_paths_refuse(run, "TIMED_OUT")
+        self.assertEqual(self.cli("resolve", run, "--abandon").returncode, 20)
+        resolved = self.cli("resolve", run, "--mark-failed", "--reason", "封存收據損毀")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        self.assertEqual(json.loads(resolved.stdout)["state"], "FAILED")
+        detail = self.last_detail(run)
+        self.assertEqual(detail["user_reason"], "封存收據損毀")
+        self.assertTrue(detail["saved_evidence_error"].startswith("KeyError"))
+
+    def test_damaged_receipt_closes_a_result_recovered_in_the_same_call(self):
+        run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", b"{}")
+        self.manager.publish_result(run, {
+            "schema_version": "2.0", "run_id": run, "template": "review", "status": "completed", "summary": "s",
+            "blocked_reason": None, "open_questions": [], "template_payload": {"findings": []}})
+        # The CLI scan would reconcile first; this is the order in which collect_saved publishes the
+        # result and then fails, leaving the reconcile to this resolve call.
+        view = self.manager.resolve(run, action="mark_failed", saved_evidence_error="LedgerError: damaged")
+        self.assertEqual((view["state"], view["state_reason"]), ("FAILED", "user_marked_failed"))
+        detail = self.last_detail(run)
+        self.assertEqual(detail, {"refund": False, "reason": "user_marked_failed", "from_state": "COLLECTING",
+                                  "recovered_from": "SUBMISSION_UNKNOWN",
+                                  "saved_evidence_error": "LedgerError: damaged"})
+        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 1)
+
+    def test_long_saved_evidence_error_keeps_its_tail(self):
+        run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", b"{}")
+        message = "OSError: " + "x" * 2000 + r"C:\state\runs\claude.process.json"
+        self.manager.resolve(run, action="mark_failed", saved_evidence_error=message)
+        recorded = self.last_detail(run)["saved_evidence_error"]
+        self.assertEqual(len(recorded), 1000)
+        self.assertTrue(recorded.startswith("OSError: "))
+        self.assertTrue(recorded.endswith(r"C:\state\runs\claude.process.json"))
+        self.assertIn("[truncated]", recorded)
+
 
 # ---- A5 -------------------------------------------------------------------------------------------
 class SnapshotExclusionTests(Scratch):
