@@ -139,7 +139,11 @@ def _merge(defaults, supplied, prefix=""):
                 raise ConfigError(f"{name} 必須是單行文字陣列")
             value = value.copy()
         elif isinstance(value, int):
-            valid = 0 <= value <= 100 if name == "triggers.t4_codex_used_percent" else value > 0
+            if name == "triggers.t4_codex_used_percent":
+                valid = 0 <= value <= 100
+            else:
+                # 0 disables mah cleanup --apply; every other count must be positive.
+                valid = value >= 0 if name == "privacy.retain_run_dirs_days" else value > 0
             if not valid:
                 raise ConfigError(f"{name} 超出允許範圍")
         values[key] = value

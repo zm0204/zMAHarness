@@ -51,5 +51,5 @@ allowed_command_prefixes = ["pytest", "npm test", "npm run test", "dotnet test"]
 timeout_s = 900
 
 [privacy]
-# 尚未實作：目前不會自動清理。請手動刪除 state/runs 與 worktrees 底下不再需要的舊資料。
+# mah cleanup 的預設天數；不會自動清理，mah cleanup 預設只列出，加 --apply 才刪除。0 代表停用 --apply。
 retain_run_dirs_days = 30

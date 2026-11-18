@@ -109,3 +109,5 @@
 !/tests/v2/test_process_tree.py
 !/tests/v2/test_pending_recovery.py
 !/tests/v2/test_card_snapshot_head.py
+!/mah/cleanup.py
+!/tests/v2/test_cleanup.py

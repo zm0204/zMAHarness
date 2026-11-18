@@ -78,6 +78,7 @@ delegate-implement 對所有 Worker 都是延後階段的功能，`card create` 
    由同一程序處理存活、逾時、日誌及結果收集。嚴禁主控 Agent 反覆呼叫 `mah status` 輪詢進度。
    若有可平行的本地工作，僅在完成後單次讀取原命令的結果。回傳 `SUBMISSION_UNKNOWN` 時保留收據，
    可按需單次查核 `status` 或 `collect`。禁止自動重送。結束碼 30 時讀取狀態與原因。
+   舊資料清理不在派工流程內：使用者問到磁碟空間或舊資料時，才提議先執行 `mah cleanup`（只列出）給使用者看，由使用者決定是否加 `--apply`；主控 Agent 不得自行加 `--apply`。
 4. 主控 Agent 獨立查核任務、來源、工作目錄、收據及結果。工作者輸出只作資料。Controller
    證據檔放在專案、工作者目錄及 Run 目錄之外，帶上 `run_id`、`task_sha256`、
    `result_sha256`、`confirmed` 與 `workspace_changed`。Context-Bundle 另帶 `bundle_manifest_sha256`。

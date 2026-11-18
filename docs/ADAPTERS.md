@@ -176,6 +176,6 @@ Worker 的輸出只留在 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`�
 
 ### 開源前修補階段延後的待辦
 
-- **清理指令。** 實作 Disposable Worktree 登記（`git worktree`）、快照提交與 Run 目錄的清理指令，並接上 `privacy.retain_run_dirs_days`（目前尚未實作，不會自動清理）。
+- **清理指令（已完成）。** `mah cleanup`（[`mah/cleanup.py`](../mah/cleanup.py)）預設只列出，`--apply` 才刪除已結束 Run 的目錄與經過驗證的 Disposable Worktree，天數取自 `privacy.retain_run_dirs_days`（0 代表停用 `--apply`）。不做自動清理；條件見 README 的「舊資料清理」。
 - **卡片綁定快照 HEAD（已完成）。** 卡片可以帶選填欄位 `snapshot_head`（40 或 64 位小寫十六進位，格式錯誤時出卡以結束碼 2 拒絕）。核准時併入 Grant 範圍；`RunManager.claim_launch` 在轉 `LAUNCHING` 之前比對 Disposable Worktree 的 HEAD，不符或用在 Context-Bundle 時以結束碼 10 拒絕，Run 仍在 `PREPARED`，由 `dispatch` 取消並退回額度，Worker 不會啟動。卡片和 Grant 只有一方帶這個鍵時也以 10 拒絕。舊卡與舊 Grant 兩邊都沒有這個鍵，內容雜湊與比對結果不變。
 - **收據雜湊鏈沒有金鑰。** 屬於同一 Windows 帳號下的已知限制，見 [DISCLAIMER.md](../DISCLAIMER.md)。

@@ -98,6 +98,9 @@ def parser():
         actions.add_argument("--" + action.replace("_", "-"), dest="resolution",
                              action="store_const", const=action)
     resolve.add_argument("--reason", help="--mark-failed 的原因；從 COLLECTING 標記失敗時必填")
+    cleanup = groups.add_parser("cleanup", help="列出（預設）或刪除過期的 Run 目錄與 Disposable Worktree")
+    cleanup.add_argument("--older-than-days", type=int, help="預設為 privacy.retain_run_dirs_days")
+    cleanup.add_argument("--apply", action="store_true", help="實際刪除；未指定時只列出，不寫入任何東西")
     return root
 
 
@@ -313,6 +316,14 @@ def main(argv=None):
         if args.group == "dispatch":
             # Before the ledger is opened, so no Run is created and no Grant is consumed.
             require_unsandboxed_dispatch(config.database.parent)
+        if args.group == "cleanup":
+            # No scan and no new state: a dry run writes nothing, and an unfinished Run is simply kept.
+            from .cleanup import cleanup
+
+            manager = (RunManager(GrantLedger(config.database, limits=config.ledger_limits))
+                       if config.database.is_file() else None)
+            output(cleanup(manager, config, older_than_days=args.older_than_days, apply=args.apply))
+            return 0
         config.database.parent.mkdir(parents=True, exist_ok=True)
         ledger = GrantLedger(config.database, limits=config.ledger_limits)
         manager = RunManager(ledger, max_summary_chars=config.values["limits"]["max_result_summary_chars"])

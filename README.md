@@ -98,8 +98,12 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 ## 本機設定與故障排除
 
 - **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits，略過派工前後的額度查詢。
-- **舊資料清理**：`privacy.retain_run_dirs_days` 目前尚未實作，不會自動清理。請定期手動刪除設定資料夾內 `state\runs` 與 `worktrees` 底下不再需要的舊資料；Disposable Worktree 請在目標專案以 `git worktree remove <路徑>` 刪除；若已直接刪掉資料夾，再執行 `git worktree prune`。
-- **清理 `state\runs` 之前**：先執行 `mah status --active` 確認沒有未結束的 Run。刪掉未結束 Run 的收據檔，會讓它無法正常收集；若 Run 卡住（例如所有派工都以結束碼 13 被拒），執行 `mah resolve <run_id> --mark-failed --reason "<原因>"` 結束它，Run 會變成 `FAILED`，Grant 不退回。
+- **舊資料清理**：不會自動清理。執行 `mah cleanup` 列出超過 `privacy.retain_run_dirs_days`（預設 30 天，可用 `--older-than-days N` 覆寫）的 Run 目錄與 Disposable Worktree；預設只列出（JSON），不寫入任何東西，確認清單後加 `--apply` 才會刪除，刪除無法復原。設定值 `0` 代表停用：只能列出，`--apply` 以結束碼 2 拒絕。
+  - 只刪除已結束、而且已採納或拒絕（`accept`／`reject-result`）的 Run；`FAILED`、`FAILED_PRE_SUBMIT`、`CANCELLED`、`ABANDONED` 不需要採納決定。未結束的 Run、成功但尚未採納或拒絕的 Run、未到期的 Run 一律保留，清單會寫出原因。
+  - Disposable Worktree 只在路徑是 `worktrees\<run_id>`、而且 HEAD 仍是快照提交或派工時的提交時，才以 `git worktree remove` 移除；不符合時 Worktree 和 Run 目錄都保留（`worktree_present`）。沒有 Run 紀錄的孤兒 Worktree 也會列出，只有快照提交訊息相符的才會移除。
+  - Run 目錄或其中任何項目是符號連結或 junction 時拒絕刪除。帳本紀錄保留，刪除後 `mah status <run_id>` 仍可查詢（`task_evidence` 會是 `missing`）。
+  - `git worktree prune` 只在 `--apply`、而且該 repo 所有可 prune 的登記都位於 `worktrees` 底下時才執行，否則只回報。快照提交不另外清理，由 Git 自己的 gc 回收。
+- **Run 卡住時**：`mah cleanup` 不會碰未結束的 Run。若 Run 卡住（例如所有派工都以結束碼 13 被拒），執行 `mah resolve <run_id> --mark-failed --reason "<原因>"` 結束它，Run 會變成 `FAILED`，Grant 不退回；不要手動刪除未結束 Run 的收據檔，否則它無法正常收集。
 - **codex-exec 一律以結束碼 17 拒絕，訊息提到 system Codex configuration 或 Windows Codex policy**：`C:\ProgramData\OpenAI\Codex\config.toml`、`requirements.toml` 或登錄檔 `HKLM\SOFTWARE\Policies\OpenAI\Codex` 的 `RequirementsPath` 存在時，Codex 會套用這些系統層設定，`--ignore-user-config` 擋不住，可能改變模型供應商、模型目錄或工具，所以 zMAHarness 一律拒絕。若這些檔案是你自己建立的，移除或改名後重試；若由公司管理，請不要繞過，改用其他 Worker。
 - **移除 zMAHarness**：刪除 Python 使用者套件目錄中的 `zmaharness.pth`（位置可用 `python -m site --user-site` 查詢）、上述兩處 `zmaharness` Skill 目錄，以及 `%LOCALAPPDATA%\zMAHarness`，最後刪除 clone 目錄。
 - **Worker 執行檔**：zMAHarness 只從 PATH 中的絕對路徑尋找 `claude`、`codex`、`agy`，不使用目前目錄或相對路徑下的同名檔案；解析結果位於目標專案、工作樹或 Bundle 目錄內時一律拒絕（結束碼 14）。
