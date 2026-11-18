@@ -463,8 +463,10 @@ class GrantLedger:
             raise LedgerError(20, "Invalid run transition")
         if state == "FAILED_PRE_SUBMIT" and reason not in PRE_SUBMIT_REASONS:
             raise LedgerError(20, "Known pre-submit evidence is required for a refund")
+        # The shared CLI Worker base binds "capture_sha256"; agy-print keeps its historical key.
         if state == "FAILED_PRE_SUBMIT" and reason == "process_not_started" and (
-            not policy_for(run["adapter"]).refunds_unstarted_process or not (evidence or {}).get("agy_capture_sha256")
+            not policy_for(run["adapter"]).refunds_unstarted_process
+            or not valid_id(SHA256, (evidence or {}).get("capture_sha256") or (evidence or {}).get("agy_capture_sha256"))
         ):
             raise LedgerError(20, "Local process failure requires a bound agy capture")
         if (state == "CANCELLED" and expected == "LAUNCHING"

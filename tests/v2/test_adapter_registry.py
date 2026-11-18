@@ -14,7 +14,7 @@ from mah.adapters import registry
 from mah.adapters.agy_print import AgyPrintAdapter
 from mah.adapters.base import Adapter, AdapterPolicy
 from mah.config import ConfigError, load_config
-from mah.db import connect
+from mah.db import connect, transaction
 from mah.ledger import GrantLedger, LedgerError
 from mah.run_manager import RunManager
 from mah.verifier import VerificationEvidence, Verifier, requirements_for
@@ -312,6 +312,79 @@ class DummyAdapterRegistrationTests(unittest.TestCase):
         self.assertFalse(registry.has_factory("test-dummy"))
         self.assertIsNone(registry.capture_check("test-dummy"))
         self.assertEqual(registry.dispatchable_names(), ("agy-print", "claude-print", "codex-exec"))
+
+
+class RefundCaptureKeyTests(unittest.TestCase):
+    """The unstarted-process refund accepts the shared base key and the historical agy key."""
+
+    MESSAGE = "Local process failure requires a bound agy capture"
+
+    def setUp(self):
+        fixture = TemporaryDirectory(prefix="mah-refund-key-")
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        (self.root / "state").mkdir()
+        self.ledger = GrantLedger(self.root / "state" / "ledger.sqlite3")
+        self.manager = RunManager(self.ledger)
+        for name, refunds in (("test-refund", True), ("test-norefund", False)):
+            registry.register(name, AdapterPolicy(refunds_unstarted_process=refunds))
+            self.addCleanup(registry.unregister, name)
+
+    def launching(self, adapter):
+        card_id = f"card-{uuid4().hex}"
+        digest = self.ledger.create_card(card_id, repo_root=str(self.root), task_key=card_id, trigger_ids=["T5"],
+                                         prepare_mode="card", allowed_templates=["review"], max_dispatches=1,
+                                         allowed_targets=[{"adapter": adapter, "model": "m", "effort_max": "low"}],
+                                         ttl_minutes=10)
+        grant_id = self.ledger.approve(card_id, digest, via="manual_cli")
+        run_id = f"refund-{uuid4().hex}"
+        task = b"synthetic task"
+        self.ledger.check_and_reserve(grant_id, run_id, repo_root=self.root, template="review", adapter=adapter,
+                                      model="m", effort="low", workspace_kind="read_only",
+                                      workspace_path=self.root, task_sha256=sha256(task).hexdigest())
+        self.manager.prepare(run_id, task)
+        self.manager.claim_launch(run_id)
+        return run_id, grant_id
+
+    def refund(self, run_id, evidence):
+        with transaction(self.ledger.database) as db:
+            run = db.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            self.ledger._transition(db, run, "FAILED_PRE_SUBMIT", reason="process_not_started", evidence=evidence)
+
+    def assert_refunded(self, key):
+        run_id, grant_id = self.launching("test-refund")
+        self.refund(run_id, {key: "a" * 64})
+        run = self.ledger.get_run(run_id)
+        self.assertEqual((run["state"], run["dispatch_consumed"]), ("FAILED_PRE_SUBMIT", 0))
+        self.assertEqual(self.ledger.get_grant(grant_id)["used_dispatches"], 0)
+
+    def assert_refused(self, adapter, evidence):
+        run_id, grant_id = self.launching(adapter)
+        with self.assertRaises(LedgerError) as error:
+            self.refund(run_id, evidence)
+        self.assertEqual((error.exception.code, str(error.exception)), (20, self.MESSAGE))
+        self.assertEqual(self.ledger.get_run(run_id)["state"], "LAUNCHING")
+        self.assertEqual(self.ledger.get_grant(grant_id)["used_dispatches"], 1)
+        self.manager.ledger.transition(run_id, "LAUNCHING", "SUBMISSION_UNKNOWN")
+        self.manager.resolve(run_id, action="abandon")
+
+    def test_shared_base_capture_key_refunds(self):
+        self.assert_refunded("capture_sha256")
+
+    def test_historical_agy_capture_key_still_refunds(self):
+        self.assert_refunded("agy_capture_sha256")
+
+    def test_a_value_that_is_not_sha256_is_refused(self):
+        for key in ("capture_sha256", "agy_capture_sha256"):
+            for value in ("yes", "A" * 64, "a" * 63, "a" * 65, 1, True, None):
+                with self.subTest(key=key, value=value):
+                    self.assert_refused("test-refund", {key: value})
+        self.assert_refused("test-refund", None)
+
+    def test_a_policy_without_refunds_is_refused_with_either_key(self):
+        for key in ("capture_sha256", "agy_capture_sha256"):
+            with self.subTest(key=key):
+                self.assert_refused("test-norefund", {key: "a" * 64})
 
 
 if __name__ == "__main__":
