@@ -246,8 +246,39 @@ def _log_submission(path):
     return None
 
 
+def _object_sequence_final(text, decoder):
+    """The last of back-to-back JSON objects filling all of `text`, or None."""
+    final = None
+    try:
+        while text:
+            final, end = decoder.raw_decode(text)
+            if not isinstance(final, dict):
+                return None
+            text = text[end:].lstrip()
+    except ValueError:
+        return None
+    return final
+
+
+def _contains_object(text, decoder):
+    """True when any `{` in plain text starts a decodable JSON object."""
+    index = text.find("{")
+    while index >= 0:
+        try:
+            if isinstance(decoder.raw_decode(text, index)[0], dict):
+                return True
+        except ValueError:
+            pass
+        index = text.find("{", index + 1)
+    return False
+
+
 def _response_agrees(response, structured, schema_echo, expected_schema):
-    """Allow complete draft objects before the display copy of the structured result."""
+    """Allow plain narration, then complete draft objects, before the display copy of the structured result.
+
+    The narration is never part of the result: the result comes from `structured_output`, and the narration
+    may not carry a JSON object of its own. Nothing may follow the last object, which must equal the result.
+    """
     text = response.strip() if response else ""
     decoder = json.JSONDecoder(object_pairs_hook=_unique_fields, parse_constant=_invalid_constant)
     try:
@@ -256,12 +287,13 @@ def _response_agrees(response, structured, schema_echo, expected_schema):
         if not text or text == structured["summary"].strip():
             return True
         canonical = _bytes(structured)
-        while text:
-            final, end = decoder.raw_decode(text)
-            if not isinstance(final, dict):
-                return False
-            text = text[end:].lstrip()
-        return _bytes(final) == canonical
+        start = text.find("{")
+        while start >= 0:
+            final = _object_sequence_final(text[start:], decoder)
+            if final is not None:
+                return _bytes(final) == canonical and not _contains_object(text[:start], decoder)
+            start = text.find("{", start + 1)
+        return False
     except (ValueError, RecursionError):
         return False
 

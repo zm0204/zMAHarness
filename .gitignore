@@ -83,6 +83,7 @@
 !/tests/v2/fixtures/agy-1.5.5-phase0b2-redacted.json
 !/tests/v2/test_agy_process.py
 !/tests/v2/fixtures/agy-1.5.5-review-smoke-redacted.json
+!/tests/v2/fixtures/agy-1.5.9-claude-sonnet-narration-redacted.json
 !/mah/context_bundle.py
 !/tests/v2/test_context_bundle.py
 !/.agents/

@@ -19,6 +19,7 @@ from mah.verifier import VerificationEvidence, Verifier
 ROOT = Path(__file__).resolve().parents[2]
 REAL_STDOUT = Path(__file__).with_name("fixtures") / "agy-1.5.5-phase0b2-redacted.json"
 REAL_REVIEW = Path(__file__).with_name("fixtures") / "agy-1.5.5-review-smoke-redacted.json"
+NARRATED_REVIEW = Path(__file__).with_name("fixtures") / "agy-1.5.9-claude-sonnet-narration-redacted.json"
 MODEL = "gemini-3.8-flash-low"
 TASK = "# 合成任務\n".encode()
 
@@ -232,6 +233,62 @@ class AgyPrintTests(unittest.TestCase):
         view = self.collect(replace(capture, stdout=_bytes(raw)))
         self.assertEqual((view["state"], view["completion_evidence"]), ("COLLECTING", "verified"))
         self.assertEqual(json.loads((self.files(capture) / "result.json").read_bytes()), final)
+
+    def narrated_capture(self):
+        """The real claude-sonnet-5-5-medium Review (agy 1.5.9) that opens with plain narration."""
+        raw = NARRATED_REVIEW.read_bytes()
+        self.assertEqual(sha256(raw).hexdigest(), "1bcebbd6c257a8e76dabeabf57348625127035f1cdc9f88be935aaf5d3876dd6")
+        document = json.loads(raw)
+        capture = replace(self.prepare(run_id=document["structured_output"]["run_id"]), stdout=raw,
+                          wall_milliseconds=194330, workspace_changed=False)
+        return capture, document
+
+    def test_real_narrated_review_collects_without_the_narration(self):
+        capture, document = self.narrated_capture()
+        response, final = document["response"], document["structured_output"]
+        self.assertTrue(response.startswith("我先閱讀相關檔案。\nUse read_file instead.\n"))
+        directory = self.files(capture)
+        _publish(directory / "agy.stdout.pending", capture.stdout)
+        _publish(directory / "agy.stderr.pending", capture.stderr)
+        self.adapter.persist_capture(SimpleNamespace(process_identity={"pid": 123, "identity": "offline"},
+            started_at="2026-11-18T14:11:50+00:00", launch_error=None), capture)
+        view = self.adapter.collect_saved(capture.run_id)
+        self.assertEqual((view["state"], view["state_reason"], view["completion_evidence"]),
+                         ("COLLECTING", "structured_result_collected", "verified"))
+        result = (directory / "result.json").read_bytes()
+        self.assertEqual(json.loads(result), final)
+        self.assertNotIn("我先閱讀相關檔案", result.decode("utf-8"))
+        # The narration stays only in the sealed evidence, never in the result.
+        self.assertEqual((directory / "last_message.txt").read_bytes(), response.encode("utf-8"))
+        evidence = VerificationEvidence(capture.task_sha256, sha256(result).hexdigest(), confirmed=True,
+                                        workspace_changed=False, reviewed_findings=len(final["template_payload"]["findings"]))
+        verified = Verifier(self.manager).verify(capture.run_id, evidence=evidence)
+        self.assertEqual((verified["state"], verified["verification"]["decision"]), ("SUCCEEDED", "verified"))
+
+    def assert_narrated_response_conflicts(self, build):
+        """`build(final)` returns the response text; each case runs in a fresh Run with the real envelope."""
+        document = json.loads(NARRATED_REVIEW.read_bytes())
+        capture = replace(self.prepare(run_id=f"agy-{uuid4().hex}"), workspace_changed=False)
+        document = json.loads(_bytes(document).decode().replace(document["structured_output"]["run_id"],
+                                                                capture.run_id))
+        view = self.collect(replace(capture, stdout=_bytes(document | {
+            "response": build(document["structured_output"])})))
+        self.assertEqual((view["state"], view["state_reason"]), ("FAILED", "structured_output_conflict"))
+        self.assertFalse((self.files(capture) / "DONE").exists())
+
+    def test_narration_carrying_a_different_json_object_still_conflicts(self):
+        def build(final):
+            other = final | {"summary": "Another answer inside the narration"}
+            return "說明 " + _bytes(other).decode() + " 之後還有說明。\n" + _bytes(final).decode()
+        self.assert_narrated_response_conflicts(build)
+
+    def test_narration_before_a_different_final_object_still_conflicts(self):
+        self.assert_narrated_response_conflicts(
+            lambda final: "我先閱讀相關檔案。\n" + _bytes(final | {"summary": "Not the structured output"}).decode())
+
+    def test_text_after_the_final_object_still_conflicts(self):
+        self.assert_narrated_response_conflicts(
+            lambda final: "我先閱讀相關檔案。\n" + _bytes(final).decode() + "\n以上是結論。")
 
     def test_structured_result_can_stand_alone_but_still_needs_verifier(self):
         capture = self.prepare()
