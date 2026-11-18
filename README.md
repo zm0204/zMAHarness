@@ -93,7 +93,7 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 
 - **對話核准（`codex_prompt`，預設）**：你在主控對話中同意後，由主控執行 `mah grant approve --via codex_prompt` 寫入同意紀錄。這筆紀錄是主控寫入的，CLI 只能檢查卡片雜湊、範圍與次數，無法防止不遵守 Skill 的主控自行寫入。
 - **終端機核准（`manual_cli`）**：需要硬性保證時，在本機 TOML 設定 `approval.mode = "manual_cli"`。之後每張卡都必須由你在互動終端機執行 `mah grant approve <card_id> --sha <完整 SHA-256> --via manual_cli`，親手輸入畫面上的確認碼；`--via codex_prompt` 會以結束碼 10 拒絕。預設的 `codex_prompt` 模式兩種方式都接受。
-- `delegate-implement`（讓 Worker 修改程式）屬於延後階段的功能，目前所有 Worker 一律拒絕，只做唯讀分析。
+- `delegate-implement`（讓 Worker 修改程式）屬於延後階段的功能，目前所有 Worker 一律拒絕，只做唯讀分析，已列入路線圖。
 
 ## 本機設定與故障排除
 
@@ -132,6 +132,7 @@ suggested_controller = "Codex Sol High"
 以下項目**規劃中，尚未實作**。
 
 1. OpenAI 相容 API Worker（DeepSeek、Ollama 等本地模型）。僅支援 Context-Bundle，需使用者自行提供 API 金鑰。
+2. 委派實作（delegate-implement）：Worker 只在可拋棄的 worktree 內修改程式並產出 diff，由主控審查、自行套用並跑測試，絕不自動合併；每次派工仍需使用者同意。
 
 ## 離線驗證
 

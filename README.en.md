@@ -93,7 +93,7 @@ Both modes bind the approved scope and keep receipts. Even after verification su
 
 - **In-conversation approval (`codex_prompt`, default)**: after you agree in the controller conversation, the controller runs `mah grant approve --via codex_prompt` to record your consent. That record is written by the controller; the CLI can check the card hash, scope, and count, but it cannot stop a controller that does not follow the Skill from writing it.
 - **Terminal approval (`manual_cli`)**: if you need a hard guarantee, set `approval.mode = "manual_cli"` in the local TOML. Every card must then be approved by you in an interactive terminal with `mah grant approve <card_id> --sha <full SHA-256> --via manual_cli`, typing the confirmation code shown on screen; `--via codex_prompt` is refused with exit code 10. The default `codex_prompt` mode accepts both.
-- `delegate-implement` (letting a Worker change code) is a deferred feature; every Worker currently refuses it and only performs read-only analysis.
+- `delegate-implement` (letting a Worker change code) is a deferred feature; every Worker currently refuses it and only performs read-only analysis. It is listed in the roadmap.
 
 ## Local configuration and troubleshooting
 
@@ -132,6 +132,7 @@ suggested_controller = "Codex Sol High"
 The following items are **planned and not yet implemented**.
 
 1. OpenAI-compatible API worker (DeepSeek, and local models such as Ollama). Supports Context-Bundle only, and requires users to provide their own API key.
+2. Delegated implementation (delegate-implement): the Worker changes code and produces a diff only within a disposable worktree. The controller reviews the diff, applies it itself, and runs tests. Changes are never merged automatically, and every dispatch still requires user consent.
 
 ## Offline verification
 
