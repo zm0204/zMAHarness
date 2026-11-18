@@ -22,6 +22,9 @@ READ_ONLY_TEMPLATES = frozenset({"review", "second-opinion", "research"})
 DESKTOP_APPROVAL_EVIDENCE = "codex_desktop_decision"
 DISPATCH_SCOPE_FIELDS = {"timeout_seconds", "workspace_path", "task_sha256"}
 BOUND_SCOPE_FIELDS = DISPATCH_SCOPE_FIELDS | {"workspace_identity"}
+# Optional: the snapshot commit a Disposable Worktree card was approved for (spec 2e). Old cards lack it.
+SNAPSHOT_HEAD_FIELD = "snapshot_head"
+SNAPSHOT_HEAD = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultra")
 TERMINAL_STATES = ("SUCCEEDED", "FAILED", "FAILED_PRE_SUBMIT", "CANCELLED", "ABANDONED")
 REFUND_STATES = {"CANCELLED", "FAILED_PRE_SUBMIT"}
@@ -111,6 +114,14 @@ def require_bound_workspace(value, scope):
         raise LedgerError(10, "Worktree path or directory identity differs from the approved scope")
 
 
+def bound_scope(content, card_sha256):
+    """The Grant scope an approved card binds; snapshot_head joins it only when the card carries one."""
+    scope = {key: content[key] for key in BOUND_SCOPE_FIELDS} | {"card_sha256": card_sha256}
+    if SNAPSHOT_HEAD_FIELD in content:
+        scope[SNAPSHOT_HEAD_FIELD] = content[SNAPSHOT_HEAD_FIELD]
+    return scope
+
+
 def require_dispatch_scope(db, grant, adapter, *, workspace_path, task_sha256, timeout_seconds):
     via, evidence = grant["approved_via"], grant["approval_evidence"]
     policy = policy_for(adapter)
@@ -130,7 +141,7 @@ def require_dispatch_scope(db, grant, adapter, *, workspace_path, task_sha256, t
     try:
         scope = json.loads(saved)
         content = json.loads(card["content_json"])
-        expected_scope = {key: content[key] for key in BOUND_SCOPE_FIELDS} | {"card_sha256": card["content_sha256"]}
+        expected_scope = bound_scope(content, card["content_sha256"])
         if (card["status"] != "APPROVED" or digest(card["content_json"]) != card["content_sha256"]
                 or scope != expected_scope
                 or grant["repo_root"] != content["repo_root"]
@@ -182,7 +193,7 @@ class GrantLedger:
     def create_card(self, card_id, *, repo_root, task_key, trigger_ids, prepare_mode,
                     allowed_templates, allowed_targets, max_dispatches, ttl_minutes,
                     override_suggestion_limit=False, enabled_adapters=None,
-                    timeout_seconds=None, workspace_path=None, task_sha256=None):
+                    timeout_seconds=None, workspace_path=None, task_sha256=None, snapshot_head=None):
         if not valid_id(IDENTIFIER, card_id) or not valid_id(IDENTIFIER, task_key):
             raise LedgerError(2, "Invalid card or task identifier")
         if prepare_mode not in ("card", "prep_then_card", "explicit"):
@@ -206,6 +217,8 @@ class GrantLedger:
                 raise LedgerError(16, "Requested effort exceeds the hard limit")
         if delegate_deferred(allowed_templates, [target["adapter"] for target in allowed_targets]):
             raise LedgerError(2, DELEGATE_DEFERRED)
+        if snapshot_head is not None and not valid_id(SNAPSHOT_HEAD, snapshot_head):
+            raise LedgerError(2, "snapshot_head must be a 40- or 64-digit lowercase commit ID")
         if type(max_dispatches) is not int or type(ttl_minutes) is not int or min(max_dispatches, ttl_minutes) < 1:
             raise LedgerError(2, "Dispatch limit and duration must be positive integers")
         if max_dispatches > self.limits.max_dispatches or ttl_minutes > self.limits.ttl_minutes:
@@ -213,13 +226,15 @@ class GrantLedger:
         repo = path_identity(repo_root)
         scope = {}
         if any(policy_for(target["adapter"]).requires_dispatch_scope for target in allowed_targets) or any(
-            value is not None for value in (timeout_seconds, workspace_path, task_sha256)
+            value is not None for value in (timeout_seconds, workspace_path, task_sha256, snapshot_head)
         ):
             if (type(timeout_seconds) is not int
                     or not 1 <= timeout_seconds <= min(TEMPLATE_TIMEOUTS[template] for template in allowed_templates)
                     or not workspace_path or not valid_id(SHA256, task_sha256)):
                 raise LedgerError(2, "Card requires a valid timeout_seconds, workspace_path and task_sha256")
             scope = {"timeout_seconds": timeout_seconds, "task_sha256": task_sha256} | workspace_binding(workspace_path)
+            if snapshot_head is not None:
+                scope[SNAPSHOT_HEAD_FIELD] = snapshot_head
         content = dump({
             "card_id": card_id, "repo_root": repo, "task_key": task_key, "trigger_ids": trigger_ids,
             "prepare_mode": prepare_mode, "allowed_templates": allowed_templates,
@@ -272,6 +287,9 @@ class GrantLedger:
         # A card stored before delegate-implement was deferred is refused at approval.
         if delegate_deferred(content["allowed_templates"], [target["adapter"] for target in content["allowed_targets"]]):
             raise LedgerError(10, DELEGATE_DEFERRED)
+        if SNAPSHOT_HEAD_FIELD in content and (not BOUND_SCOPE_FIELDS <= content.keys()
+                                                or not valid_id(SNAPSHOT_HEAD, content[SNAPSHOT_HEAD_FIELD])):
+            raise LedgerError(10, "Card snapshot_head is invalid; create a new card")
         if BOUND_SCOPE_FIELDS <= content.keys():
             require_bound_workspace(content["workspace_path"], content)
         elif BOUND_SCOPE_FIELDS & content.keys() or any(
@@ -334,7 +352,7 @@ class GrantLedger:
             content = json.loads(card["content_json"])
             scope = None
             if BOUND_SCOPE_FIELDS <= content.keys():
-                scope = {key: content[key] for key in BOUND_SCOPE_FIELDS} | {"card_sha256": content_sha256}
+                scope = bound_scope(content, content_sha256)
             now = self.clock()
             approved = timestamp(now)
             expires = timestamp(now + timedelta(minutes=content["ttl_minutes"]))

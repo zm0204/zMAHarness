@@ -12,7 +12,8 @@ from uuid import uuid4
 from .adapters.registry import create_adapter, dispatchable_names, has_factory, policy_for
 from .config import DEFAULTS, _local_path, adapter_enabled, load_config
 from .context_bundle import bundle_manifest, check_bundle, prepare_bundle, prepare_worktree
-from .ledger import (BRAND_NAME, DISPATCH_SCOPE_FIELDS, READ_ONLY_TEMPLATES, SHA256, SUGGESTION_CARD_TITLE,
+from .ledger import (BRAND_NAME, DISPATCH_SCOPE_FIELDS, READ_ONLY_TEMPLATES, SHA256, SNAPSHOT_HEAD_FIELD,
+                     SUGGESTION_CARD_TITLE,
                      GrantLedger, LedgerError, TEMPLATE_TIMEOUTS, TEMPLATES, valid_id)
 from .preflight import preflight, require_unsandboxed_dispatch
 from .run_manager import RunManager
@@ -114,7 +115,7 @@ def read_card(path, config):
         card = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("派工卡必須是有效的 UTF-8 JSON") from exc
-    if type(card) is not dict or card.keys() - (CARD_KEYS | DISPATCH_SCOPE_FIELDS):
+    if type(card) is not dict or card.keys() - (CARD_KEYS | DISPATCH_SCOPE_FIELDS | {SNAPSHOT_HEAD_FIELD}):
         raise ValueError("派工卡必須是符合規格的 JSON 物件")
     card.setdefault("ttl_minutes", config.ledger_limits.ttl_minutes)
     if missing := CARD_KEYS - card.keys():
@@ -146,6 +147,8 @@ def show_card(card):
         print(f"逾時：{content['timeout_seconds']} 秒")
         print(f"工作樹：{content['workspace_path']}")
         print(f"任務 SHA-256 {content['task_sha256']}")
+    if SNAPSHOT_HEAD_FIELD in content:
+        print(f"快照 HEAD：{content[SNAPSHOT_HEAD_FIELD]}")
     print("驗收：由對應模板規定。額度：unknown。")
     print(f"預估影響：最多預留 {content['max_dispatches']} 筆派工。")
     print(f"SHA-256 {card['content_sha256']}")

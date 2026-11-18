@@ -64,7 +64,9 @@ delegate-implement 對所有 Worker 都是延後階段的功能，`card create` 
      寫入實作計畫。Context-Bundle 由 `bundle create` 將計畫與核准的完整原始檔一併封裝。
      其他情況沿用卡片核准的任務類型與範圍。
 2. 在顯示對話卡後的下一輪，收到使用者回覆才以 `card create` 建立單次卡片。綁定儲存庫、模板、Adapter、模型、
-   effort 上限、實際任務 SHA-256、工作目錄、逾時及期限。主控 Agent 取得完整卡片 SHA-256
+   effort 上限、實際任務 SHA-256、工作目錄、逾時及期限。Disposable Worktree 卡片一律填入 `worktree create` 輸出的
+   `snapshot_head`（Context-Bundle 卡片不填）；核准後工作樹被切到其他提交時，派工會在啟動前以結束碼 10 拒絕並退回額度。
+   主控 Agent 取得完整卡片 SHA-256
    並執行 `grant approve <card_id> --sha <完整 SHA-256> --via codex_prompt`。
    回傳 10 且訊息說明 `approval.mode = "manual_cli"` 時，停止腳本，把完整的 `grant approve ... --via manual_cli` 指令交給使用者
    在自己的互動終端機執行並親手輸入確認碼；使用者回報完成後再執行步驟 3。

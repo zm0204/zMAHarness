@@ -4,15 +4,16 @@ from datetime import datetime
 from hashlib import sha256
 import json
 from os import getpid
+from pathlib import Path
 from subprocess import TimeoutExpired
 
 from .adapters.registry import policy_for
 from .atomic_io import atomic_write
-from .context_bundle import bundle_manifest
+from .context_bundle import _head, bundle_manifest
 from .db import connect, transaction
 from .executable_path import refuse_inside_roots
-from .ledger import (READ_ONLY_TEMPLATES, BUSY_QUERY, RUN_ID, SHA256, TARGET_ID, TERMINAL_STATES, LedgerError, event,
-                     path_identity, require_dispatch_scope, timestamp, valid_id)
+from .ledger import (READ_ONLY_TEMPLATES, BUSY_QUERY, RUN_ID, SHA256, SNAPSHOT_HEAD_FIELD, TARGET_ID, TERMINAL_STATES,
+                     LedgerError, event, path_identity, require_dispatch_scope, timestamp, valid_id)
 from .process_identity import probe_process
 
 RESULT_STATES = {"RUNNING", "TIMED_OUT", "SUBMISSION_UNKNOWN", "COLLECTING"}
@@ -163,6 +164,7 @@ class RunManager:
                     db, grant, run["adapter"], workspace_path=metadata["cwd"], task_sha256=run["task_sha256"],
                     timeout_seconds=metadata.get("timeout_s"),
                 )
+                self._require_snapshot_head(run, scope, metadata["cwd"])
                 _publish(directory / "invocation.json", invocation)
                 # Written once at the claim; receipts are unchanged and terminal Runs are never backfilled.
                 version = _ledger_text(metadata.get("cli_version"))
@@ -172,6 +174,21 @@ class RunManager:
             owner = self._process(getpid())
             self._change(db, run, "LAUNCHING", evidence={"process": owner})
             return scope
+
+    @staticmethod
+    def _require_snapshot_head(run, scope, cwd):
+        """A card bound to a snapshot commit launches only on that commit (spec 2e); still PREPARED, so the
+        caller cancels the Run and the Grant is refunded."""
+        if not scope or SNAPSHOT_HEAD_FIELD not in scope:
+            return
+        if run["workspace_kind"] != "disposable_worktree":
+            raise LedgerError(10, "snapshot_head only applies to a Disposable Worktree")
+        try:
+            head = _head(Path(cwd))
+        except (OSError, ValueError):
+            head = None
+        if head != scope[SNAPSHOT_HEAD_FIELD]:
+            raise LedgerError(10, "Disposable worktree HEAD differs from the approved snapshot_head")
 
     def dispatch(self, adapter, *, grant_id, run_id, repo_root, template, model, effort, task,
                  workspace, worktree_root, timeout_s=None, requirements=None):
