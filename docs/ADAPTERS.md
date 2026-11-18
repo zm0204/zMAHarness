@@ -82,6 +82,13 @@
 
 agy 保留自己的 `probe`、`prepare_invocation`／`build_invocation`、`collect` 與結構化輸出 replay。
 
+**程序樹（Windows Job Object）。** 基底在 Popen 之後立刻把 Worker 放進設了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object
+（[`mah/process_tree.py`](../mah/process_tree.py)），三個 CLI Worker 都適用：逾時或 Ctrl+C 時以 `TerminateJobObject` 終止整棵程序樹，
+正常結束後關閉 Job，順帶清掉 Worker 留下的孫程序；mah 本身被強制結束時，系統關閉 handle，整棵樹一起結束。
+Job 建立或指派失敗時**不擋派工**，退回只終止 Worker 本身的舊行為，在 stderr 印一行警告，並把原因寫進程序收據
+`<prefix>.process.json` 的 `job_object_error`（只有失敗時才有這個鍵，一般收據的鍵集合不變；`collect_saved` 照常核對）。
+非 Windows 或測試替身（不是真的 `subprocess.Popen`）不建立 Job，也不記錄。Popen 回傳到指派之間有微秒級空窗，這段時間建立的孫程序可能不受管理。
+
 ### codex-exec
 
 `codex-exec`（[`codex_exec.py`](../mah/adapters/codex_exec.py)）只啟動原生 `codex.exe`，**只支援 Context-Bundle**。`-s read-only` 無法把讀取範圍綁在 Disposable Worktree 內。
@@ -159,7 +166,6 @@ agy 保留自己的 `probe`、`prepare_invocation`／`build_invocation`、`colle
 ### 開源前修補階段延後的待辦
 
 - **從 `.pending` 補封存的復原路徑。** 程序收據封存前若中斷，目前只留下 `.pending` 串流，需要一條從它們補封存、但不重新啟動 Worker 的復原路徑。
-- **終止整個 Worker 程序樹。** 逾時或主控程序結束時，目前只終止 Worker 本身；改用 Windows Job Object，讓子程序一併結束。
 - **清理指令。** 實作 Disposable Worktree 登記（`git worktree`）、快照提交與 Run 目錄的清理指令，並接上 `privacy.retain_run_dirs_days`（目前尚未實作，不會自動清理）。
 - **卡片綁定快照 HEAD。** Disposable Worktree 卡片改為同時綁定快照提交的 HEAD，而不只綁定工作目錄身分與任務 SHA-256。
 - **收據雜湊鏈沒有金鑰。** 屬於同一 Windows 帳號下的已知限制，見 [DISCLAIMER.md](../DISCLAIMER.md)。

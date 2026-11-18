@@ -17,11 +17,13 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 from subprocess import Popen
 from time import monotonic
 
 from ..context_bundle import _workspace_snapshot, _worktree_baseline, bundle_manifest
 from ..db import transaction
+from .. import process_tree
 from ..ledger import (AGY_OUTPUT_CONFLICT, READ_ONLY_TEMPLATES, TARGET_ID, TEMPLATE_TIMEOUTS, TERMINAL_STATES,
                       LedgerError, event, require_bound_workspace, timestamp, valid_id)
 from ..run_manager import _bytes, _publish, _read, _result_document, record_observation
@@ -64,6 +66,9 @@ class CliLaunchHandle:
     clock_started: float
     launch_error: str | None = None
     launch_detail: dict | None = None
+    # The Windows Job Object holding the Worker's process tree (never serialized), or why it is missing.
+    job: object = field(default=None, compare=False, repr=False)
+    job_error: str | None = None
 
     @property
     def pid(self):
@@ -236,10 +241,20 @@ class CliWorkerAdapter:
             record.pop("outputs")
         record["process"] = handle.process_identity
         record["started_at"] = handle.started_at
+        return self._containment_record(handle, record)
+
+    @staticmethod
+    def _containment_record(handle, record):
+        # Only a failed Job Object adds a key, so every ordinary process receipt keeps its exact bytes.
+        # Handles built by older tools and tests may not carry the containment fields.
+        error = getattr(handle, "job_error", None)
+        if error is not None:
+            record["job_object_error"] = error
         return record
 
     def capture_from_record(self, directory, record, streams):
         """Rebuild the capture from a sealed process receipt whose streams were already checked."""
+        record.pop("job_object_error", None)
         outputs = {}
         for name, digest in record.pop("outputs", {}).items():
             if name not in self.output_files:
@@ -266,6 +281,14 @@ class CliWorkerAdapter:
 
     def _clock(self):
         return monotonic()
+
+    def _contain(self, process):
+        """Put the Worker's process tree in a kill-on-close Job Object; a failure never blocks the dispatch."""
+        job, error = process_tree.contain(process)
+        if error is not None:
+            print(f"警告：無法以 Windows Job Object 管理 {self.id} 的程序樹（{error}）；"
+                  "逾時或中斷時只會終止 Worker 本身", file=sys.stderr)
+        return job, error
 
     def _message(self, key):
         return self.messages[key].format(id=self.id)
@@ -480,15 +503,25 @@ class CliWorkerAdapter:
                 detail = {"errno": exc.errno, "winerror": winerror}
                 error = "process_not_started" if confirmed else "process_launch_unknown"
                 return CliLaunchHandle(plan, None, None, started_at, clock_started, error, detail)
+            job, job_error = self._contain(process)
         try:
             identity = manager.mark_running(plan.run_id, pid=process.pid)
         except LedgerError:
             # A very short-lived process may already be gone when its creation identity is queried.
             identity = {"pid": process.pid, "identity": None}
-        return CliLaunchHandle(plan, process, identity, started_at, clock_started)
+        return CliLaunchHandle(plan, process, identity, started_at, clock_started, job=job, job_error=job_error)
 
     def observe(self, handle):
         """Wait locally once until exit or the approved deadline."""
+        try:
+            return self._observe(handle)
+        finally:
+            # Closing the kill-on-close job also ends grandchildren the Worker left behind.
+            job = getattr(handle, "job", None)
+            if job is not None:
+                job.close()
+
+    def _observe(self, handle):
         process = handle.process
         termination = "exited"
         exit_code = None
@@ -502,11 +535,13 @@ class CliWorkerAdapter:
                 exit_code = process.poll()
                 if exit_code is None:
                     termination = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "interrupted"
-                    try:
-                        process.kill()
-                    except OSError:
-                        if process.poll() is None:
-                            raise
+                    job = getattr(handle, "job", None)
+                    if job is None or not job.terminate():
+                        try:
+                            process.kill()
+                        except OSError:
+                            if process.poll() is None:
+                                raise
                     exit_code = process.wait(timeout=5)
             if termination == "exited" and (exit_code in (-signal.SIGINT, -signal.SIGTERM)
                                             or exit_code & 0xFFFFFFFF == 0xC000013A):

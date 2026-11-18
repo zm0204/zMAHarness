@@ -456,9 +456,10 @@ class AgyPrintAdapter(CliWorkerAdapter):
         record["process"] = handle.process_identity
         record["started_at"] = handle.started_at
         record["launch_error"] = handle.launch_error
-        return record
+        return self._containment_record(handle, record)
 
     def capture_from_record(self, directory, record, streams):
+        record.pop("job_object_error", None)
         for key in ("process", "started_at", "launch_error"):
             record.pop(key)
         record["tool_events"] = tuple(record["tool_events"])
