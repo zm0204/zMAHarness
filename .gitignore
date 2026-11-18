@@ -97,3 +97,9 @@
 !/mah/executable_path.py
 !/mah/login_status.py
 !/tests/v2/test_hardening.py
+!/tests/v2/test_agy_golden.py
+!/tests/v2/tools/
+!/tests/v2/tools/make_agy_golden.py
+!/tests/v2/tools/recollect_real_agy.py
+!/tests/v2/fixtures/agy-golden/
+!/tests/v2/fixtures/agy-golden/**

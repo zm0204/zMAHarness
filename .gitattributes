@@ -5,3 +5,4 @@
 /tests/v2/fixtures/claude-2.1.325-bundle-smoke-redacted.json -text
 /tests/v2/fixtures/codex-0.154.0-bundle-smoke-redacted.jsonl -text
 /tests/v2/fixtures/codex-0.154.0-bundle-smoke-last-message.json -text
+/tests/v2/fixtures/agy-golden/** -text

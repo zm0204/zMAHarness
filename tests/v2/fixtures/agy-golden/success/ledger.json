@@ -1,0 +1,114 @@
+{
+ "cards": [
+  {
+   "card_id": "golden-card",
+   "content_json": "{\"allowed_targets\":[{\"adapter\":\"agy-print\",\"effort_max\":\"low\",\"model\":\"gemini-3.8-flash-low\"}],\"allowed_templates\":[\"review\"],\"card_id\":\"golden-card\",\"max_dispatches\":1,\"prepare_mode\":\"explicit\",\"repo_root\":\"c:\\\\zmah-golden\\\\repo\",\"task_key\":\"golden\",\"task_sha256\":\"cf045a0303263514015ac65bf0b47b48b070fc412514cf34a496865bd37e0093\",\"timeout_seconds\":60,\"trigger_ids\":[\"T5\"],\"ttl_minutes\":10,\"workspace_identity\":[7,11],\"workspace_path\":\"c:\\\\zmah-golden\\\\worktrees\\\\review\"}",
+   "content_sha256": "4b68bdba4cb192afb5d758661c2f8fcf2f4425df56c5a96f533a912531cf0651",
+   "created_at": "2026-11-18T09:00:00.000000+00:00",
+   "prepare_mode": "explicit",
+   "repo_root": "c:\\zmah-golden\\repo",
+   "status": "APPROVED",
+   "task_key": "golden",
+   "trigger_ids": "[\"T5\"]"
+  }
+ ],
+ "grants": [
+  {
+   "allowed_targets": "[{\"adapter\":\"agy-print\",\"effort_max\":\"low\",\"model\":\"gemini-3.8-flash-low\"}]",
+   "allowed_templates": "[\"review\"]",
+   "approval_evidence": null,
+   "approved_at": "2026-11-18T09:00:00.000000+00:00",
+   "approved_via": "manual_cli",
+   "card_id": "golden-card",
+   "dispatch_scope_json": "{\"card_sha256\":\"4b68bdba4cb192afb5d758661c2f8fcf2f4425df56c5a96f533a912531cf0651\",\"task_sha256\":\"cf045a0303263514015ac65bf0b47b48b070fc412514cf34a496865bd37e0093\",\"timeout_seconds\":60,\"workspace_identity\":[7,11],\"workspace_path\":\"c:\\\\zmah-golden\\\\worktrees\\\\review\"}",
+   "expires_at": "2026-11-18T09:10:00.000000+00:00",
+   "grant_id": "0000000000000000000000000000601d",
+   "kind": "standard",
+   "max_concurrency": 1,
+   "max_dispatches": 1,
+   "repo_root": "c:\\zmah-golden\\repo",
+   "status": "ACTIVE",
+   "superseded_by": null,
+   "used_dispatches": 1
+  }
+ ],
+ "run_events": [
+  {
+   "actor": "mah",
+   "detail_json": null,
+   "from_state": null,
+   "id": 1,
+   "run_id": "smoke-00000000000000000000000000000000",
+   "to_state": "RESERVED",
+   "ts": "2026-11-18T09:00:00.000000+00:00"
+  },
+  {
+   "actor": "mah",
+   "detail_json": "{\"reason\":\"task_published\",\"refund\":false}",
+   "from_state": "RESERVED",
+   "id": 2,
+   "run_id": "smoke-00000000000000000000000000000000",
+   "to_state": "PREPARED",
+   "ts": "2026-11-18T09:00:00.000000+00:00"
+  },
+  {
+   "actor": "mah",
+   "detail_json": "{\"process\":{\"identity\":\"golden-4242\",\"pid\":4242},\"reason\":null,\"refund\":false}",
+   "from_state": "PREPARED",
+   "id": 3,
+   "run_id": "smoke-00000000000000000000000000000000",
+   "to_state": "LAUNCHING",
+   "ts": "2026-11-18T09:00:00.000000+00:00"
+  },
+  {
+   "actor": "mah",
+   "detail_json": "{\"conversation_id\":null,\"process\":{\"identity\":\"golden-4343\",\"pid\":4343},\"reason\":null,\"refund\":false}",
+   "from_state": "LAUNCHING",
+   "id": 4,
+   "run_id": "smoke-00000000000000000000000000000000",
+   "to_state": "RUNNING",
+   "ts": "2026-11-18T09:00:00.000000+00:00"
+  },
+  {
+   "actor": "mah",
+   "detail_json": "{\"agy_capture_sha256\":\"85225e5e4ab037e1b8e01e6e5274a7e14b2161e163f814ca7232d4c4afa89387\",\"exit_code\":0,\"reason\":\"structured_result_collected\",\"refund\":false,\"result_sha256\":\"19a54b421d0955cff7446c3ba3c7e7ecc72dc9166da2d84c6348c07e1ce19db5\"}",
+   "from_state": "RUNNING",
+   "id": 5,
+   "run_id": "smoke-00000000000000000000000000000000",
+   "to_state": "COLLECTING",
+   "ts": "2026-11-18T09:00:00.000000+00:00"
+  }
+ ],
+ "runs": [
+  {
+   "acceptance_reason": null,
+   "acceptance_status": "PENDING",
+   "adapter": "agy-print",
+   "base_commit": null,
+   "cli_version": null,
+   "conversation_id": "00000000-0000-4000-8000-000000000002",
+   "created_at": "2026-11-18T09:00:00.000000+00:00",
+   "dispatch_consumed": 1,
+   "effort_observed": null,
+   "effort_requested": "low",
+   "exit_code": 0,
+   "finished_at": null,
+   "grant_id": "0000000000000000000000000000601d",
+   "launched_at": "2026-11-18T09:00:00.000000+00:00",
+   "model_observed": null,
+   "model_requested": "gemini-3.8-flash-low",
+   "parent_run_id": null,
+   "pid": 4343,
+   "repo_root": "c:\\zmah-golden\\repo",
+   "result_sha256": "19a54b421d0955cff7446c3ba3c7e7ecc72dc9166da2d84c6348c07e1ce19db5",
+   "run_id": "smoke-00000000000000000000000000000000",
+   "state": "COLLECTING",
+   "state_reason": "structured_result_collected",
+   "task_sha256": "cf045a0303263514015ac65bf0b47b48b070fc412514cf34a496865bd37e0093",
+   "template": "review",
+   "trigger_id": null,
+   "workspace_kind": "disposable_worktree",
+   "workspace_path": "c:\\zmah-golden\\worktrees\\review"
+  }
+ ]
+}

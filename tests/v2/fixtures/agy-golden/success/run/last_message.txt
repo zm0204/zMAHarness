@@ -1,0 +1,2 @@
+{"blocked_reason":"","open_questions":[],"run_id":"smoke-00000000000000000000000000000000","schema_version":"v2","status":"completed","summary":"隔離測試｜0123456789abcdef0123456789abcdef","template":"review","template_payload":{"findings":[]}}
+{"blocked_reason":"","open_questions":[],"run_id":"smoke-00000000000000000000000000000000","schema_version":"2.0","status":"completed","summary":"隔離測試｜0123456789abcdef0123456789abcdef","template":"review","template_payload":{"findings":[]}}
