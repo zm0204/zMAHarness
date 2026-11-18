@@ -339,6 +339,21 @@ class RunManager:
             status = "reused" if identity else "unknown"
         return status, evidence
 
+    def recoverable_process(self, run_id):
+        """Read-only check for the .pending recovery (spec 2b): (run, recorded Worker) when the Run is RUNNING
+        or fell to SUBMISSION_UNKNOWN because that Worker is gone, the Worker is confirmed gone, and the mah
+        process that claimed the launch is no longer alive; otherwise None."""
+        with closing(connect(self.database)) as db:
+            run = self._run(db, run_id)
+            if not (run["state"] == "RUNNING"
+                    or (run["state"] == "SUBMISSION_UNKNOWN" and run["state_reason"] == "process_gone")):
+                return None
+            worker_status, worker = self._last_process(db, run, "RUNNING")
+            owner_status, _ = self._last_process(db, run, "LAUNCHING")
+            if worker_status != "gone" or owner_status not in ("gone", "reused"):
+                return None
+            return run, worker
+
     def _reconcile(self, db, run, *, resume_observation=False):
         state = run["state"]
         if state == "RESERVED" and self._task_evidence(run) == "verified":

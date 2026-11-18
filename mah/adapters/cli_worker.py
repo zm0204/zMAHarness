@@ -9,7 +9,7 @@ vector, the read-only argument check, the worker environment, the stdout normali
 receipt-integrity reason string.
 """
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import errno
 from hashlib import sha256
 import os
@@ -25,7 +25,7 @@ from ..context_bundle import _workspace_snapshot, _worktree_baseline, bundle_man
 from ..db import transaction
 from .. import process_tree
 from ..ledger import (AGY_OUTPUT_CONFLICT, READ_ONLY_TEMPLATES, TARGET_ID, TEMPLATE_TIMEOUTS, TERMINAL_STATES,
-                      LedgerError, event, require_bound_workspace, timestamp, valid_id)
+                      LedgerError, event, path_identity, require_bound_workspace, timestamp, valid_id)
 from ..run_manager import _bytes, _publish, _read, _result_document, record_observation
 from ..verifier import Verifier, _template_valid, requirements_for
 from .cli_common import (CAPTURE_STATES, InvocationPlan, _bundle_workspace_snapshot, _count, _invocation_snapshot,
@@ -55,6 +55,8 @@ class CliCapture:
     workspace_after_sha256: str | None = None
     # Files the CLI itself writes into the run directory (for example a last-message file), by name.
     outputs: dict = field(default_factory=dict)
+    # "pending" only for a receipt sealed afterwards from the .pending streams (spec 2b); omitted when None.
+    recovered: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,8 @@ class CliLaunchHandle:
     # The Windows Job Object holding the Worker's process tree (never serialized), or why it is missing.
     job: object = field(default=None, compare=False, repr=False)
     job_error: str | None = None
+    # Built by the .pending recovery path for a Worker that is already gone; nothing is launched.
+    recovered: bool = False
 
     @property
     def pid(self):
@@ -83,6 +87,15 @@ def _neutral(exc):
     return LedgerError(exc.code, message)
 
 
+def check_recovered(capture):
+    """A receipt recovered from the .pending streams can never claim an exit code or a launch error."""
+    recovered = getattr(capture, "recovered", None)
+    if recovered is not None and (recovered != "pending" or capture.termination != "interrupted"
+                                  or capture.exit_code is not None or getattr(capture, "launch_error", None)
+                                  or getattr(capture, "pre_submit_reason", None) or capture.wall_milliseconds is not None):
+        raise LedgerError(30, "Invalid recovered Worker process receipt")
+
+
 def _check_capture(capture):
     if (not isinstance(capture.stdout, bytes) or not isinstance(capture.stderr, bytes)
             or (capture.exit_code is not None and type(capture.exit_code) is not int)
@@ -92,6 +105,7 @@ def _check_capture(capture):
             or not isinstance(capture.outputs, dict)
             or any(not isinstance(name, str) or not isinstance(data, bytes) for name, data in capture.outputs.items())):
         raise LedgerError(2, "Invalid Worker process capture")
+    check_recovered(capture)
     if capture.termination == "not_started":
         if (capture.launch_error != "process_not_started" or capture.exit_code is not None
                 or capture.stdout or capture.tool_events):
@@ -239,6 +253,8 @@ class CliWorkerAdapter:
             record["outputs"] = {name: sha256(data).hexdigest() for name, data in capture.outputs.items()}
         else:
             record.pop("outputs")
+        if capture.recovered is None:
+            record.pop("recovered")
         record["process"] = handle.process_identity
         record["started_at"] = handle.started_at
         return self._containment_record(handle, record)
@@ -571,7 +587,9 @@ class CliWorkerAdapter:
         except FileNotFoundError:
             if replay_output:
                 raise LedgerError(30, self._message("replay_receipt_missing")) from None
-            return self.manager.collect(run_id)
+            if not self._recover_pending(run_id):
+                return self.manager.collect(run_id)
+            raw_receipt = _read(directory / self._file("process.json"))
         record = _json(raw_receipt)
         if record["run_id"] != run_id:
             raise LedgerError(30, self._message("receipt_other_run"))
@@ -584,6 +602,51 @@ class CliWorkerAdapter:
         capture = self.capture_from_record(directory, record, streams)
         return self.collect_sealed(run_id, capture, process_receipt_sha256=sha256(raw_receipt).hexdigest(),
                                    replay_output=replay_output)
+
+    def _recover_pending(self, run_id):
+        """Seal a process receipt from the .pending streams after mah itself was killed during observe.
+
+        Strict (spec 2b): only for a Run whose recorded Worker is gone and whose launching mah is no longer
+        alive, with both streams present and no receipt yet. It never starts a process: the receipt says
+        termination "interrupted", no exit code and recovered "pending", and the workspace is snapshot again.
+        Returns False, leaving everything untouched, when any condition does not hold.
+        """
+        manager = self.manager
+        directory = manager._directory(run_id)
+        streams = [directory / self._file(f"{name}.pending") for name in ("stdout", "stderr")]
+        if (any(path.is_symlink() or not path.is_file() for path in streams)
+                or os.path.lexists(directory / self._file("capture.json"))):
+            return False
+        found = manager.recoverable_process(run_id)
+        if found is None:
+            return False
+        run, worker = found
+        if run["adapter"] != self.id or manager._task_evidence(run) != "verified":
+            return False
+        try:
+            invocation = _read(directory / "invocation.json")
+            metadata = _json(invocation)
+            if ((metadata["run_id"], metadata["task_sha256"], metadata["workspace_kind"]) !=
+                    (run_id, run["task_sha256"], run["workspace_kind"])
+                    or path_identity(metadata["cwd"]) != run["workspace_path"]
+                    or type(metadata["timeout_s"]) is not int or not isinstance(metadata["argv"], list)):
+                return False
+            stdin_name = metadata.get("stdin_file")
+            plan = InvocationPlan(run_id, tuple(metadata["argv"]), Path(metadata["cwd"]), run["workspace_kind"],
+                                  metadata["timeout_s"], invocation, metadata["workspace_baseline_sha256"],
+                                  run["task_sha256"], run["model_requested"], run["effort_requested"],
+                                  run["template"], directory / stdin_name if stdin_name else None)
+        except (OSError, ValueError, KeyError, TypeError, RecursionError, LedgerError):
+            return False
+        try:
+            after, _ = self._snapshot(plan)
+        except (OSError, ValueError, subprocess.TimeoutExpired, LedgerError):
+            after = None
+        handle = CliLaunchHandle(plan, None, worker, run["launched_at"], 0.0, recovered=True)
+        capture = replace(self.make_capture(handle, exit_code=None, termination="interrupted",
+                                            wall_milliseconds=None, after=after), recovered="pending")
+        self.persist_capture(handle, capture)
+        return True
 
     def _classify(self, capture, observed, run, tool_reason):
         if capture.termination == "not_started":
@@ -602,9 +665,17 @@ class CliWorkerAdapter:
         if capture.termination == "timeout" or extra_submission:
             return "TIMED_OUT", "process_timed_out", None
         if capture.termination != "exited" or capture.exit_code is None:
+            if getattr(capture, "recovered", None) is not None:
+                # Only a complete, schema-valid success envelope is collected; success is still the Verifier's.
+                state, reason, result = self._classify_result(capture, observed, run)
+                if (state, reason) == ("COLLECTING", "structured_result_collected"):
+                    return "COLLECTING", "recovered_result_collected", result
             return "SUBMISSION_UNKNOWN", "process_completion_unknown", None
         if capture.exit_code != 0:
             return "FAILED", "process_failed", None
+        return self._classify_result(capture, observed, run)
+
+    def _classify_result(self, capture, observed, run):
         if observed is None or not observed["raw_status"]:
             return "FAILED", "schema_invalid", None
         if observed["raw_status"] != self.success_status:

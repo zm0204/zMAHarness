@@ -47,6 +47,7 @@ delegate-implement 對所有 Worker 都是延後階段的功能，`card create` 
 - **Claude Code 主控的等待方式**：Claude Code 單次工具呼叫最長 10 分鐘，而 Review 與 Second Opinion 的上限是 900 秒、Research 是 1200 秒。
   執行 `mah dispatch` 的腳本必須以背景方式執行（工具的背景執行選項），等完成通知後再單次讀取結果；
   不可讓工具逾時中止 `mah`，否則 Run 會停在送出狀態不明。Codex 主控照原本方式在單次呼叫中阻塞等待。
+  萬一 `mah` 仍被中止，Worker 已經自行結束時，之後單次 `mah collect <run_id>` 會從 `.pending` 串流補封存收據，完整的成功輸出可以照常驗收（不重新啟動 Worker、不重送）；輸出不完整時 Run 維持送出狀態不明，依 `resolution_actions` 收尾。
 
 1. 依卡片核准的模式及範圍準備資料。
    - **Context-Bundle 優先**。1～2 個核心檔案可完整封裝在 `max_task_bytes`（預設 32 KB）

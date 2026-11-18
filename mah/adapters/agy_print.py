@@ -23,7 +23,7 @@ from ..verifier import Verifier, requirements_for
 from .cli_common import (CAPTURE_STATES, WORKER_ENV, InvocationPlan, _bundle_workspace_snapshot,  # noqa: F401
                          _contains_object, _count, _invalid_constant, _json, _object_sequence_final,
                          _require_bundle_directory, _response_agrees, _response_schema, _text, _unique_fields, _uuid)
-from .cli_worker import CliLaunchHandle, CliWorkerAdapter
+from .cli_worker import CliLaunchHandle, CliWorkerAdapter, check_recovered
 
 
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens", "total_tokens")
@@ -174,6 +174,7 @@ class AgyCapture:
     workspace_changed: bool | None = None
     workspace_after_sha256: str | None = None
     log_submission: dict | None = None
+    recovered: str | None = None
 
 
 def _check_capture(capture):
@@ -192,6 +193,7 @@ def _check_capture(capture):
             capture.termination not in ("timeout", "interrupted") or not isinstance(capture.log_submission, dict)
             or capture.log_submission.keys() != {"conversation_id", "marker", "sha256"}):
         raise LedgerError(30, "Invalid agy log submission receipt")
+    check_recovered(capture)
     for event in capture.tool_events:
         if (not isinstance(event, dict) or event.keys() != {"type", "name", "status", "exit_code"}
                 or event["type"] != "tool" or not isinstance(event["name"], str) or not event["name"]
@@ -435,7 +437,8 @@ class AgyPrintAdapter(CliWorkerAdapter):
         directory = self.manager._directory(handle.plan.run_id)
         stdout = _read(directory / "agy.stdout.pending")
         log_submission = None
-        if handle.process is not None and termination in ("timeout", "interrupted"):
+        started = handle.process is not None or getattr(handle, "recovered", False)
+        if started and termination in ("timeout", "interrupted"):
             observed = normalize_stdout(stdout)
             if not (observed and observed["raw_status"]):
                 log_submission = _log_submission(directory / "agy.cli.log")
@@ -451,6 +454,8 @@ class AgyPrintAdapter(CliWorkerAdapter):
         record = asdict(capture)
         if capture.log_submission is None:
             record.pop("log_submission")
+        if capture.recovered is None:
+            record.pop("recovered")
         record["stdout"] = sha256(capture.stdout).hexdigest()
         record["stderr"] = sha256(capture.stderr).hexdigest()
         record["process"] = handle.process_identity

@@ -89,6 +89,17 @@ Job 建立或指派失敗時**不擋派工**，退回只終止 Worker 本身的�
 `<prefix>.process.json` 的 `job_object_error`（只有失敗時才有這個鍵，一般收據的鍵集合不變；`collect_saved` 照常核對）。
 非 Windows 或測試替身（不是真的 `subprocess.Popen`）不建立 Job，也不記錄。Popen 回傳到指派之間有微秒級空窗，這段時間建立的孫程序可能不受管理。
 
+**從 `.pending` 補封存（mah 被強制結束後）。** `observe` 等待中 mah 被硬中止時，`<prefix>.process.json` 不會寫出，
+Worker 的輸出只留在 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`。之後 `collect_saved` 找不到程序收據時，只在下列條件**全部**成立時補封存，否則照舊交給 `RunManager.collect`：
+
+- Run 是 `RUNNING`，或因為 Worker 消失而落到 `SUBMISSION_UNKNOWN`（原因 `process_gone`）；
+- 帳本記錄的 Worker 程序確定已消失（`gone`；`alive`、`unknown`、PID 被重用都不行），而且當初 claim 的 mah 程序也不在了；
+- 兩個 `.pending` 都在，還沒有 `<prefix>.capture.json`；`invocation.json` 與帳本的 Run、任務、工作目錄一致。
+
+補封存的收據是 `termination="interrupted"`、`exit_code` 與 `wall_milliseconds` 為 null，並帶 `"recovered": "pending"`（只有這條路徑才有這個鍵）；
+工作目錄會重新快照，agy 照常擷取 CLI log 的送出證據。之後照一般流程收集：只有 stdout 是完整的成功 envelope、結構化結果通過 schema 與一致性檢查時，
+才進 `COLLECTING`（原因 `recovered_result_collected`），成功仍由 Verifier 判定；其他情況維持 `SUBMISSION_UNKNOWN`。整條路徑不會啟動任何程序。
+
 ### codex-exec
 
 `codex-exec`（[`codex_exec.py`](../mah/adapters/codex_exec.py)）只啟動原生 `codex.exe`，**只支援 Context-Bundle**。`-s read-only` 無法把讀取範圍綁在 Disposable Worktree 內。
@@ -165,7 +176,6 @@ Job 建立或指派失敗時**不擋派工**，退回只終止 Worker 本身的�
 
 ### 開源前修補階段延後的待辦
 
-- **從 `.pending` 補封存的復原路徑。** 程序收據封存前若中斷，目前只留下 `.pending` 串流，需要一條從它們補封存、但不重新啟動 Worker 的復原路徑。
 - **清理指令。** 實作 Disposable Worktree 登記（`git worktree`）、快照提交與 Run 目錄的清理指令，並接上 `privacy.retain_run_dirs_days`（目前尚未實作，不會自動清理）。
 - **卡片綁定快照 HEAD。** Disposable Worktree 卡片改為同時綁定快照提交的 HEAD，而不只綁定工作目錄身分與任務 SHA-256。
 - **收據雜湊鏈沒有金鑰。** 屬於同一 Windows 帳號下的已知限制，見 [DISCLAIMER.md](../DISCLAIMER.md)。
