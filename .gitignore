@@ -104,3 +104,6 @@
 !/tests/v2/fixtures/agy-golden/
 !/tests/v2/fixtures/agy-golden/**
 !/mah/adapters/cli_common.py
+!/tests/v2/test_ledger_observed.py
+!/mah/process_tree.py
+!/tests/v2/test_process_tree.py
