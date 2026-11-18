@@ -5,7 +5,7 @@ from ..executable_path import which
 
 from ..ledger import LedgerError
 from ..run_manager import _bytes
-from .agy_print import WORKER_ENV, _count, _json, _response_schema, _text, _uuid
+from .cli_common import WORKER_ENV, _count, _json, _response_schema, _text, _uuid
 from .cli_worker import CliWorkerAdapter
 
 CLAUDE_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
@@ -84,14 +84,7 @@ class ClaudePrintAdapter(CliWorkerAdapter):
     prefix = "claude"
     capture_reason = "claude_capture_integrity"
     efforts = CLAUDE_EFFORTS
-
-    @classmethod
-    def from_config(cls, manager, config):
-        command = config.values["adapters"]["claude_command"]
-        # A single executable path relative to the local TOML, or a command on PATH.
-        if Path(command).is_absolute() or "/" in command or chr(92) in command:
-            command = str((config.path.parent / Path(command)).resolve())
-        return cls(manager, command=command, max_task_bytes=config.values["limits"]["max_task_bytes"])
+    command_setting = "claude_command"
 
     def resolve_executable(self):
         executable = resolve_claude_executable(self.command)

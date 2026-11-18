@@ -288,5 +288,27 @@ class CliWorkerStateTests(WorkerFixture, unittest.TestCase):
         self.assertIsNone(self.ledger.get_run(self.run_id))
 
 
+class SharedModuleTests(unittest.TestCase):
+    """The shared helpers live in cli_common; agy_print re-exports them under the same names."""
+
+    NAMES = ("CAPTURE_STATES", "WORKER_ENV", "InvocationPlan", "_bundle_workspace_snapshot", "_count", "_json",
+             "_require_bundle_directory", "_response_agrees", "_response_schema", "_text", "_unique_fields", "_uuid")
+
+    def test_agy_print_reexports_the_shared_helpers(self):
+        from mah.adapters import agy_print, cli_common, cli_worker
+        for name in self.NAMES:
+            with self.subTest(name):
+                self.assertIs(getattr(agy_print, name), getattr(cli_common, name))
+        self.assertIs(cli_worker.InvocationPlan, cli_common.InvocationPlan)
+
+    def test_base_hook_defaults_keep_the_existing_receipts(self):
+        self.assertEqual((CliWorkerAdapter.evidence_key, CliWorkerAdapter.conversation_reason),
+                         ("capture_sha256", "conversation_observed"))
+        self.assertTrue(CliWorkerAdapter.prompt_via_stdin)
+        self.assertFalse(CliWorkerAdapter.replays_output)
+        self.assertEqual(CliWorkerAdapter.not_started_outcome(None, None), ("SUBMISSION_UNKNOWN", "process_not_started"))
+        self.assertFalse(CliWorkerAdapter.extra_submission(None, None))
+
+
 if __name__ == "__main__":
     unittest.main()

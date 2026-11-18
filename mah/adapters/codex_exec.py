@@ -11,7 +11,7 @@ import subprocess
 from ..context_bundle import bundle_manifest
 from ..ledger import READ_ONLY_TEMPLATES, LedgerError
 from ..run_manager import _bytes
-from .agy_print import WORKER_ENV, _count, _json, _response_schema, _text, _uuid
+from .cli_common import WORKER_ENV, _count, _json, _response_schema, _text, _uuid
 from .cli_worker import STRUCTURED_OUTPUT_CONFLICT, CliWorkerAdapter
 from . import codex_probe
 
@@ -139,17 +139,10 @@ class CodexExecAdapter(CliWorkerAdapter):
     prefix = "codex"
     capture_reason = "codex_capture_integrity"
     efforts = CODEX_EFFORTS
+    command_setting = "codex_command"
     # The -o file is the structured result; agreement with the JSONL message is checked in _classify.
     check_response_agreement = False
     output_files = (LAST_MESSAGE_FILE,)
-
-    @classmethod
-    def from_config(cls, manager, config):
-        command = config.values["adapters"]["codex_command"]
-        # A single executable path relative to the local TOML, or a command on PATH.
-        if Path(command).is_absolute() or "/" in command or chr(92) in command:
-            command = str((config.path.parent / Path(command)).resolve())
-        return cls(manager, command=command, max_task_bytes=config.values["limits"]["max_task_bytes"])
 
     def resolve_executable(self):
         executable = resolve_codex_executable(self.command)

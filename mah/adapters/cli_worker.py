@@ -8,6 +8,7 @@ Subclasses provide only: the receipt prefix, executable resolution, required fla
 vector, the read-only argument check, the worker environment, the stdout normalizer and the
 receipt-integrity reason string.
 """
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 import errno
 from hashlib import sha256
@@ -25,8 +26,8 @@ from ..ledger import (AGY_OUTPUT_CONFLICT, READ_ONLY_TEMPLATES, TARGET_ID, TEMPL
                       LedgerError, event, require_bound_workspace, timestamp, valid_id)
 from ..run_manager import _bytes, _publish, _read, _result_document
 from ..verifier import Verifier, _template_valid, requirements_for
-from .agy_print import (CAPTURE_STATES, InvocationPlan, _bundle_workspace_snapshot, _count, _invocation_snapshot,
-                        _json, _require_bundle_directory, _response_agrees, _response_schema)
+from .cli_common import (CAPTURE_STATES, InvocationPlan, _bundle_workspace_snapshot, _count, _invocation_snapshot,
+                         _json, _require_bundle_directory, _response_agrees, _response_schema)
 
 # The ledger constant's value carries no Adapter name; it is shared on purpose.
 STRUCTURED_OUTPUT_CONFLICT = AGY_OUTPUT_CONFLICT
@@ -115,11 +116,40 @@ class CliWorkerAdapter:
     check_response_agreement = True
     # Run-directory files the CLI writes itself; they are sealed into the capture after exit.
     output_files = ()
+    # The [adapters] key of the local TOML that names the executable.
+    command_setting = None
+    # The prompt is published as a run-directory file and passed on stdin; otherwise stdin is closed.
+    prompt_via_stdin = True
+    # Only an Adapter that records structured output conflicts can replay its sealed output.
+    replays_output = False
+    # The Ledger evidence key and RUNNING reason that _apply records.
+    evidence_key = "capture_sha256"
+    conversation_reason = "conversation_observed"
+    # Error messages of the shared launch and recovery steps; {id} is the Adapter ID.
+    messages = {
+        "reservation_mismatch": "{id} invocation does not match its reservation",
+        "timeout": "Worker timeout exceeds template limits",
+        "changed_before_launch": "Worker directory changed before launch",
+        "bundle_grant": "Context-Bundle requires a grant limited to one dispatch",
+        "bundle_changed_after_claim": "Bundle workspace changed after launch claim",
+        "worktree_changed_after_claim": "Disposable worktree changed after launch claim",
+        "receipt_other_run": "Worker process receipt belongs to a different run",
+        "receipt_streams": "Worker process receipt does not match its streams",
+        "replay_receipt_missing": "Output replay requires the sealed Worker process receipt",
+    }
 
     def __init__(self, manager, *, command=None, max_task_bytes=32768):
         self.manager = manager
         self.command = command
         self.max_task_bytes = max_task_bytes
+
+    @classmethod
+    def from_config(cls, manager, config):
+        command = config.values["adapters"][cls.command_setting]
+        # A single executable path relative to the local TOML, or a command on PATH.
+        if Path(command).is_absolute() or "/" in command or chr(92) in command:
+            command = str((config.path.parent / Path(command)).resolve())
+        return cls(manager, command=command, max_task_bytes=config.values["limits"]["max_task_bytes"])
 
     # ---- Adapter-specific hooks -------------------------------------------------------------------
     def resolve_executable(self):
@@ -164,6 +194,81 @@ class CliWorkerAdapter:
     def normalize_capture(self, capture):
         """Normalize a sealed capture; the default reads stdout only."""
         return self.normalize_stdout(capture.stdout)
+
+    def not_started_outcome(self, capture):
+        """State and reason for a launch the OS refused. The Ledger refund is reserved for policies with
+        refunds_unstarted_process; by default the Grant stays used."""
+        return "SUBMISSION_UNKNOWN", "process_not_started"
+
+    def extra_submission(self, capture):
+        """Submission evidence beyond the Worker's stdout; when present the Run is classified as TIMED_OUT."""
+        return False
+
+    def readonly_violation(self, capture, run):
+        return capture.workspace_changed is True
+
+    def make_capture(self, handle, *, exit_code, termination, wall_milliseconds, after):
+        """Build the capture after the process ended, from the run-directory streams and output files."""
+        directory = self.manager._directory(handle.plan.run_id)
+        outputs = {}
+        for name in self.output_files:
+            try:
+                outputs[name] = _read(directory / name)
+            except FileNotFoundError:
+                pass
+        return CliCapture(
+            handle.plan.run_id, handle.plan.task_sha256, sha256(handle.plan.metadata).hexdigest(),
+            _read(directory / self._file("stdout.pending")), _read(directory / self._file("stderr.pending")),
+            exit_code, termination=termination, launch_error=handle.launch_error, launch_detail=handle.launch_detail,
+            wall_milliseconds=wall_milliseconds, workspace_changed=None if after is None else after != handle.plan.baseline,
+            workspace_after_sha256=after, outputs=outputs,
+        )
+
+    def process_record(self, handle, capture):
+        """The sealed process receipt, with stream hashes in place of the streams."""
+        record = asdict(capture)
+        record["stdout"] = sha256(capture.stdout).hexdigest()
+        record["stderr"] = sha256(capture.stderr).hexdigest()
+        # Recorded only for Adapters that declare output files, so other receipts keep their exact bytes.
+        if self.output_files:
+            record["outputs"] = {name: sha256(data).hexdigest() for name, data in capture.outputs.items()}
+        else:
+            record.pop("outputs")
+        record["process"] = handle.process_identity
+        record["started_at"] = handle.started_at
+        return record
+
+    def capture_from_record(self, directory, record, streams):
+        """Rebuild the capture from a sealed process receipt whose streams were already checked."""
+        outputs = {}
+        for name, digest in record.pop("outputs", {}).items():
+            if name not in self.output_files:
+                raise LedgerError(30, "Worker process receipt names an undeclared output file")
+            data = _read(directory / name)
+            if sha256(data).hexdigest() != digest:
+                raise LedgerError(30, "Worker process receipt does not match its output files")
+            outputs[name] = data
+        streams["outputs"] = outputs
+        for key in ("process", "started_at"):
+            record.pop(key)
+        record["tool_events"] = tuple(record["tool_events"])
+        return CliCapture(**(record | streams))
+
+    def collect_sealed(self, run_id, capture, *, process_receipt_sha256, replay_output):
+        return self.collect(run_id, capture, process_receipt_sha256=process_receipt_sha256)
+
+    # Looked up at call time, so a test can replace this module's Popen, _invocation_snapshot or monotonic.
+    def _spawn(self, argv, **options):
+        return Popen(argv, **options)
+
+    def _snapshot(self, plan):
+        return _invocation_snapshot(plan)
+
+    def _clock(self):
+        return monotonic()
+
+    def _message(self, key):
+        return self.messages[key].format(id=self.id)
 
     # ---- Shared lifecycle --------------------------------------------------------------------------
     def _file(self, suffix):
@@ -308,17 +413,17 @@ class CliWorkerAdapter:
         if run is None or (run["adapter"], run["template"], run["model_requested"], run["effort_requested"],
                            run["task_sha256"], Path(run["workspace_path"]), run["workspace_kind"]) != (
                 self.id, plan.template, plan.model, plan.effort, plan.task_sha256, plan.cwd, plan.workspace_kind):
-            raise LedgerError(10, f"{self.id} invocation does not match its reservation")
+            raise LedgerError(10, self._message("reservation_mismatch"))
         directory = manager._directory(plan.run_id)
         metadata = _json(plan.metadata)
         task = _read(directory / "task.md")
         if not 1 <= plan.timeout_s <= TEMPLATE_TIMEOUTS[plan.template]:
-            raise LedgerError(2, "Worker timeout exceeds template limits")
+            raise LedgerError(2, self._message("timeout"))
         if plan.workspace_kind == "read_only":
             self._bundle_directory(plan.cwd, Path(run["repo_root"]))
-        baseline, status = _invocation_snapshot(plan)
+        baseline, status = self._snapshot(plan)
         if status or baseline != plan.baseline:
-            raise LedgerError(20, "Worker directory changed before launch")
+            raise LedgerError(20, self._message("changed_before_launch"))
         task_text = task.decode("utf-8-sig")
         expected = self.prepare_plan(
             run_id=plan.run_id, template=run["template"], model=run["model_requested"],
@@ -331,11 +436,12 @@ class CliWorkerAdapter:
         if plan.workspace_kind == "read_only":
             grant = manager.ledger.get_grant(run["grant_id"])
             if grant is None or grant["max_dispatches"] != 1:
-                raise LedgerError(10, "Context-Bundle requires a grant limited to one dispatch")
-        prompt = self.prompt_bytes(plan.run_id, plan.template, task_text)
-        if sha256(prompt).hexdigest() != metadata["prompt_sha256"] or plan.stdin_file.parent != directory:
-            raise LedgerError(20, "Worker prompt does not match the prepared invocation")
-        _publish(plan.stdin_file, prompt)
+                raise LedgerError(10, self._message("bundle_grant"))
+        if self.prompt_via_stdin:
+            prompt = self.prompt_bytes(plan.run_id, plan.template, task_text)
+            if sha256(prompt).hexdigest() != metadata["prompt_sha256"] or plan.stdin_file.parent != directory:
+                raise LedgerError(20, "Worker prompt does not match the prepared invocation")
+            _publish(plan.stdin_file, prompt)
         launch_files = self.invocation_files(run_id=plan.run_id, template=plan.template)
         if {name: sha256(content).hexdigest() for name, content in launch_files.items()} != metadata.get(
                 "launch_files", {}):
@@ -347,24 +453,27 @@ class CliWorkerAdapter:
                 raise LedgerError(20, "Worker output file already exists; do not launch")
         scope = manager.claim_launch(plan.run_id, invocation=plan.metadata)
         started_at = timestamp(manager.ledger.clock())
-        clock_started = monotonic()
+        clock_started = self._clock()
         with (directory / self._file("stdout.pending")).open("xb") as stdout, (
             directory / self._file("stderr.pending")
-        ).open("xb") as stderr, plan.stdin_file.open("rb") as stdin:
+        ).open("xb") as stderr, (
+            plan.stdin_file.open("rb") if self.prompt_via_stdin else nullcontext(subprocess.DEVNULL)
+        ) as stdin:
             try:
                 require_bound_workspace(plan.cwd, scope)
                 if plan.workspace_kind == "read_only":
                     self._bundle_directory(plan.cwd, Path(run["repo_root"]))
                     if _bundle_workspace_snapshot(plan.cwd) != (plan.baseline, False):
-                        raise LedgerError(20, "Bundle workspace changed after launch claim")
-                elif _workspace_snapshot(plan.cwd) != (plan.baseline, b""):
-                    raise LedgerError(20, "Disposable worktree changed after launch claim")
+                        raise LedgerError(20, self._message("bundle_changed_after_claim"))
+                elif plan.workspace_kind == "disposable_worktree":
+                    if _workspace_snapshot(plan.cwd) != (plan.baseline, b""):
+                        raise LedgerError(20, self._message("worktree_changed_after_claim"))
             except (LedgerError, OSError) as exc:
                 manager.ledger.transition(plan.run_id, "LAUNCHING", "SUBMISSION_UNKNOWN")
                 raise LedgerError(21, "Worker directory changed after launch claim; preserve the run for review") from exc
             try:
-                process = Popen(plan.argv, cwd=plan.cwd, stdin=stdin, stdout=stdout, stderr=stderr,
-                                env=self.worker_environment(), shell=False)
+                process = self._spawn(plan.argv, cwd=plan.cwd, stdin=stdin, stdout=stdout, stderr=stderr,
+                                      env=self.worker_environment(), shell=False)
             except OSError as exc:
                 winerror = getattr(exc, "winerror", None)
                 confirmed = (exc.errno in (errno.ENOENT, errno.EACCES, errno.ENOEXEC) or winerror in (2, 3, 5, 193))
@@ -387,7 +496,7 @@ class CliWorkerAdapter:
             termination = "not_started" if handle.launch_error == "process_not_started" else "interrupted"
         else:
             try:
-                remaining = max(0, handle.clock_started + handle.plan.timeout_s - monotonic())
+                remaining = max(0, handle.clock_started + handle.plan.timeout_s - self._clock())
                 exit_code = process.wait(timeout=remaining)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 exit_code = process.poll()
@@ -402,89 +511,60 @@ class CliWorkerAdapter:
             if termination == "exited" and (exit_code in (-signal.SIGINT, -signal.SIGTERM)
                                             or exit_code & 0xFFFFFFFF == 0xC000013A):
                 termination = "interrupted"
-        wall_milliseconds = round((monotonic() - handle.clock_started) * 1000)
-        directory = self.manager._directory(handle.plan.run_id)
+        wall_milliseconds = round((self._clock() - handle.clock_started) * 1000)
         after = None
         if process is not None:
             try:
-                after, _ = _invocation_snapshot(handle.plan)
+                after, _ = self._snapshot(handle.plan)
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
-        outputs = {}
-        for name in self.output_files:
-            try:
-                outputs[name] = _read(directory / name)
-            except FileNotFoundError:
-                pass
-        return CliCapture(
-            handle.plan.run_id, handle.plan.task_sha256, sha256(handle.plan.metadata).hexdigest(),
-            _read(directory / self._file("stdout.pending")), _read(directory / self._file("stderr.pending")),
-            exit_code, termination=termination, launch_error=handle.launch_error, launch_detail=handle.launch_detail,
-            wall_milliseconds=wall_milliseconds, workspace_changed=None if after is None else after != handle.plan.baseline,
-            workspace_after_sha256=after, outputs=outputs,
-        )
+        return self.make_capture(handle, exit_code=exit_code, termination=termination,
+                                 wall_milliseconds=wall_milliseconds, after=after)
 
     def persist_capture(self, handle, capture):
         """Seal stream hashes before normalization so recovery never needs to relaunch."""
-        record = asdict(capture)
-        record["stdout"] = sha256(capture.stdout).hexdigest()
-        record["stderr"] = sha256(capture.stderr).hexdigest()
-        # Recorded only for Adapters that declare output files, so other receipts keep their exact bytes.
-        if self.output_files:
-            record["outputs"] = {name: sha256(data).hexdigest() for name, data in capture.outputs.items()}
-        else:
-            record.pop("outputs")
-        record["process"] = handle.process_identity
-        record["started_at"] = handle.started_at
-        _publish(self.manager._directory(capture.run_id) / self._file("process.json"), _bytes(record))
+        _publish(self.manager._directory(capture.run_id) / self._file("process.json"),
+                 _bytes(self.process_record(handle, capture)))
 
     def collect_saved(self, run_id, *, replay_output=False):
         """Recover an already sealed observation. This entry point cannot start a process."""
-        if replay_output:
+        if replay_output and not self.replays_output:
             raise LedgerError(20, f"Output replay is not supported for {self.id}")
         directory = self.manager._directory(run_id)
         try:
             raw_receipt = _read(directory / self._file("process.json"))
         except FileNotFoundError:
+            if replay_output:
+                raise LedgerError(30, self._message("replay_receipt_missing")) from None
             return self.manager.collect(run_id)
         record = _json(raw_receipt)
         if record["run_id"] != run_id:
-            raise LedgerError(30, "Worker process receipt belongs to a different run")
+            raise LedgerError(30, self._message("receipt_other_run"))
         streams = {}
         for name in ("stdout", "stderr"):
             data = _read(directory / self._file(f"{name}.pending"))
             if sha256(data).hexdigest() != record[name]:
-                raise LedgerError(30, "Worker process receipt does not match its streams")
+                raise LedgerError(30, self._message("receipt_streams"))
             streams[name] = data
-        outputs = {}
-        for name, digest in record.pop("outputs", {}).items():
-            if name not in self.output_files:
-                raise LedgerError(30, "Worker process receipt names an undeclared output file")
-            data = _read(directory / name)
-            if sha256(data).hexdigest() != digest:
-                raise LedgerError(30, "Worker process receipt does not match its output files")
-            outputs[name] = data
-        streams["outputs"] = outputs
-        for key in ("process", "started_at"):
-            record.pop(key)
-        record["tool_events"] = tuple(record["tool_events"])
-        return self.collect(run_id, CliCapture(**(record | streams)),
-                            process_receipt_sha256=sha256(raw_receipt).hexdigest())
+        capture = self.capture_from_record(directory, record, streams)
+        return self.collect_sealed(run_id, capture, process_receipt_sha256=sha256(raw_receipt).hexdigest(),
+                                   replay_output=replay_output)
 
     def _classify(self, capture, observed, run, tool_reason):
         if capture.termination == "not_started":
-            # The ledger refund is reserved for policies with refunds_unstarted_process; the Grant stays used.
-            return "SUBMISSION_UNKNOWN", "process_not_started", None
+            state, reason = self.not_started_outcome(capture)
+            return state, reason, None
         if tool_reason in ("required_action_denied", "required_action_failed"):
             return "FAILED", tool_reason, None
-        if capture.workspace_changed is True:
+        if self.readonly_violation(capture, run):
             return "FAILED", "readonly_violation", None
-        submitted = run["conversation_id"] or (
+        extra_submission = self.extra_submission(capture)
+        submitted = run["conversation_id"] or extra_submission or (
             observed and observed["conversation_id"] and (observed["num_turns"] or 0) > 0
         )
         if not submitted:
             return "SUBMISSION_UNKNOWN", "submission_evidence_missing", None
-        if capture.termination == "timeout":
+        if capture.termination == "timeout" or extra_submission:
             return "TIMED_OUT", "process_timed_out", None
         if capture.termination != "exited" or capture.exit_code is None:
             return "SUBMISSION_UNKNOWN", "process_completion_unknown", None
@@ -625,9 +705,9 @@ class CliWorkerAdapter:
         current = run["state"]
         if current in TERMINAL_STATES:
             return run
-        evidence = {"capture_sha256": sha256(_bytes(receipt)).hexdigest()}
+        evidence = {self.evidence_key: sha256(_bytes(receipt)).hexdigest()}
         exit_code = receipt["exit_code"]
-        if state == "SUBMISSION_UNKNOWN":
+        if state in ("FAILED_PRE_SUBMIT", "SUBMISSION_UNKNOWN"):
             if current in ("LAUNCHING", "RUNNING"):
                 return manager._change(db, run, state, reason=reason, evidence=evidence, exit_code=exit_code)
             return run
@@ -635,12 +715,12 @@ class CliWorkerAdapter:
             if conversation is None:
                 run = manager._change(db, run, "SUBMISSION_UNKNOWN", reason="missing_launch_receipt")
             else:
-                run = manager._change(db, run, "RUNNING", reason="conversation_observed",
+                run = manager._change(db, run, "RUNNING", reason=self.conversation_reason,
                                       evidence=evidence, conversation_id=conversation)
             current = run["state"]
         if state == "TIMED_OUT":
             if current == "SUBMISSION_UNKNOWN" and conversation is not None:
-                run = manager._change(db, run, "RUNNING", reason="conversation_observed",
+                run = manager._change(db, run, "RUNNING", reason=self.conversation_reason,
                                       evidence=evidence, conversation_id=conversation)
             if run["state"] == "RUNNING":
                 return manager._change(db, run, state, reason=reason, evidence=evidence,

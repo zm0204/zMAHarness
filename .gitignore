@@ -103,3 +103,4 @@
 !/tests/v2/tools/recollect_real_agy.py
 !/tests/v2/fixtures/agy-golden/
 !/tests/v2/fixtures/agy-golden/**
+!/mah/adapters/cli_common.py
