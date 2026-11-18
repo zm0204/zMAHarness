@@ -58,7 +58,8 @@
 ### 外部 CLI Worker 的共用基底
 
 啟動本機 CLI 子程序的唯讀 Worker，請繼承 [`mah/adapters/cli_worker.py`](../mah/adapters/cli_worker.py) 的 `CliWorkerAdapter`，
-並參考 `claude-print`（[`claude_print.py`](../mah/adapters/claude_print.py)）。基底負責 InvocationPlan、工作目錄快照與基線比對、
+並參考 `claude-print`（[`claude_print.py`](../mah/adapters/claude_print.py)）。`agy-print`、`claude-print`、`codex-exec` 三個 Adapter 都使用這個基底；
+共用的輔助函式（`InvocationPlan`、`_json`、`_response_schema`、`WORKER_ENV`……）放在 [`cli_common.py`](../mah/adapters/cli_common.py)。基底負責 InvocationPlan、工作目錄快照與基線比對、
 `claim_launch`、以 stdin 傳入提示詞、Popen、逾時與終止、`persist_capture`、`collect_saved`、狀態處理與收據完整性檢查。
 子類別只提供：收據檔名前綴、執行檔解析、必要參數、參數向量、唯讀參數檢查、子程序環境、輸出解析，以及收據檢查的原因字串。
 基底只啟動原生 `.exe`，參數向量的第一個元素必須等於重新解析出的執行檔；不經由 `.cmd`、`.bat`、`.ps1` 或 `cmd.exe` 轉呼。
@@ -70,6 +71,16 @@
 - `invocation_files(run_id, template)`：在啟動前寫入 Run 目錄的檔案（`{名稱: 位元組}`），雜湊綁定在 `invocation.json` 的 `launch_files`。
 - `output_files`：CLI 自己寫進 Run 目錄的檔案名稱。結束後封存進收據（`outputs_sha256`），`collect_saved` 與 `capture_matches` 都會核對雜湊。
 - `normalize_capture(capture)`：解析整份收據；預設只讀 stdout。
+
+`agy-print` 另外用下列掛鉤保留它原本的收據位元組，新的 Adapter 通常不需要：
+
+- `prompt_via_stdin = False`：提示詞放在參數向量最後，stdin 關閉。
+- `evidence_key`、`conversation_reason`、`messages`：帳本 evidence 鍵（agy 為 `agy_capture_sha256`）、轉 RUNNING 的原因與錯誤訊息。
+- `make_capture`、`process_record`、`capture_from_record`：收據資料類別與 `process.json` 的鍵。
+- `not_started_outcome`、`extra_submission`、`readonly_violation`：分類規則（agy 的送出前退款、log 送出證據、delegate 例外）。
+- `_spawn`、`_snapshot`、`_clock`：在呼叫當下查找 Adapter 模組的 `Popen`、`_invocation_snapshot`、`monotonic`，讓測試的 patch 目標維持有效。
+
+agy 保留自己的 `probe`、`prepare_invocation`／`build_invocation`、`collect` 與結構化輸出 replay。
 
 ### codex-exec
 
@@ -140,8 +151,8 @@
 
 ## 8. 後續
 
-- **agy 搬到共用基底。** `cli_worker.py` 是從 `AgyPrintAdapter` 移植並參數化的；為了不影響已通過真實驗收的 agy，這一階段沒有改 `agy_print.py`，所以兩者暫時有一份刻意保留的重複。`claude-print` 與 `codex-exec` 都已使用同一個基底並通過真實驗收，之後另開一個純重構階段，把 agy 搬到基底上，以 agy 現有的測試當護欄。
-- **退款證據通用化。** 屆時把帳本退款判斷裡 agy 專屬的 `agy_capture_sha256` 通用化成 `capture_sha256`（基底已使用這個名稱），`claude-print` 就可以開啟 `refunds_unstarted_process`，讓確定沒啟動的程序退回 Grant。
+- **agy 搬到共用基底（已完成）。** `AgyPrintAdapter` 已繼承 `CliWorkerAdapter`，重複的程序核心已刪除；`tests/v2/test_agy_golden.py` 的黃金 Run 目錄鎖定搬移前後的位元組。
+- **退款證據通用化（已完成）。** 帳本退款判斷同時接受 `capture_sha256` 與 `agy_capture_sha256`。`claude-print` 目前仍未開啟 `refunds_unstarted_process`，開啟需要另外決定。
 - **帳本欄位與暫存檔。** CLI Worker 的帳本 `runs.model_observed`、`runs.cli_version` 目前為 null（實際值記在收據的 `observation` 與 `cli_version`），Run 目錄也會留下 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`。這兩項延到「agy 搬上共用基底」的重構階段一起處理。
 
 ### 開源前修補階段延後的待辦

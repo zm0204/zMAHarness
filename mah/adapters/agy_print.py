@@ -477,22 +477,6 @@ class AgyPrintAdapter(CliWorkerAdapter):
     def readonly_violation(self, capture, run):
         return capture.workspace_changed is True and run["template"] != "delegate-implement"
 
-    def classify_failure(self, exit_code, stderr, events):
-        """Only the sealed observer classification can support a refund."""
-        final = next((item for item in reversed(events) if item.get("type") == "worker_exit"), {})
-        if final.get("classification") == "FAILED_PRE_SUBMIT" and final.get("termination") == "not_started":
-            return "PRE_SUBMIT"
-        return "FAILED" if final.get("classification") == "FAILED" else "UNKNOWN"
-
-    def resolve_evidence(self, run):
-        directory = self.manager._directory(run["run_id"])
-        try:
-            receipt = _json(_read(directory / "agy.capture.json"))
-        except (OSError, ValueError):
-            receipt = {}
-        return {"has_done": self.manager._completion(run)[0] == "verified", "conversation_exists": None,
-                "workspace_changed": receipt.get("workspace_changed"), "notes": "Local evidence only"}
-
     def collect(self, run_id, capture, *, process_receipt_sha256=None, replay_output=False):
         """Consume an already captured local process receipt. This method cannot launch."""
         _check_capture(capture)
