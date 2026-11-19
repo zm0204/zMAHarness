@@ -8,6 +8,13 @@ from .base import AdapterPolicy
 
 DEFAULT_POLICY = AdapterPolicy()
 
+# agy 1.5.12 lists Orchestrator models that start their own subagents. Whether the --settings deny rules
+# also bind those subagents has not been verified, so the read-only guarantee cannot be claimed for them.
+AGY_ORCHESTRATOR_PREFIX = "gemini-pro-orchestrator-"
+AGY_ORCHESTRATOR_REASON = ("agy-print 不接受 Orchestrator 模型 {model}：Orchestrator 會自行派出子代理，"
+                           "--settings 的 deny 規則能否約束這些子代理尚未驗證，無法保證唯讀。"
+                           "請改用一般 Gemini 模型（例如 gemini-4-argon-high）。")
+
 ADAPTER_POLICIES = {
     "codex-exec": AdapterPolicy(
         user_configurable=True, requires_dispatch_scope=True, attended_approval_only=True,
@@ -92,6 +99,9 @@ CAPTURE_CHECKS = {"agy-print": _agy_print_capture_check, "claude-print": _claude
 CAPTURE_REASONS = {"agy-print": "agy_capture_integrity", "claude-print": "claude_capture_integrity",
                    "codex-exec": "codex_capture_integrity"}
 DEFAULT_CAPTURE_REASON = "capture_integrity"
+# (model ID prefixes compared case-insensitively, reason with {adapter} and {model}); optional model refusal
+# applied by card creation, preflight --model and the Adapter's own prepare_invocation.
+REFUSED_MODELS = {"agy-print": ((AGY_ORCHESTRATOR_PREFIX,), AGY_ORCHESTRATOR_REASON)}
 # lookup(config) -> resolved path or None; optional read-only Worker executable check for preflight.
 EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable, "claude-print": _claude_print_executable,
                       "codex-exec": _codex_exec_executable}
@@ -105,7 +115,7 @@ EXECUTABLE_MISSING_REASONS = {
 
 
 def register(name, policy, *, factory=None, capture_check=None, capture_reason=None, executable_lookup=None,
-             executable_missing_reason=None):
+             executable_missing_reason=None, refused_models=None):
     """Register an Adapter without editing core modules. Names must be new."""
     if name in ADAPTER_POLICIES:
         raise ValueError(f"Adapter is already registered: {name}")
@@ -122,11 +132,13 @@ def register(name, policy, *, factory=None, capture_check=None, capture_reason=N
         EXECUTABLE_LOOKUPS[name] = executable_lookup
     if executable_missing_reason is not None:
         EXECUTABLE_MISSING_REASONS[name] = executable_missing_reason
+    if refused_models is not None:
+        REFUSED_MODELS[name] = refused_models
 
 
 def unregister(name):
     for table in (ADAPTER_POLICIES, ADAPTER_FACTORIES, CAPTURE_CHECKS, CAPTURE_REASONS, EXECUTABLE_LOOKUPS,
-                  EXECUTABLE_MISSING_REASONS):
+                  EXECUTABLE_MISSING_REASONS, REFUSED_MODELS):
         table.pop(name, None)
 
 
@@ -137,6 +149,14 @@ def is_registered(name):
 def policy_for(name):
     """Return the policy, or DEFAULT_POLICY for any unregistered (e.g. historical) name."""
     return ADAPTER_POLICIES.get(name, DEFAULT_POLICY)
+
+
+def refused_model_reason(name, model):
+    """The user-facing reason when the Adapter refuses this model ID, otherwise None."""
+    prefixes, reason = REFUSED_MODELS.get(name, ((), None))
+    if isinstance(model, str) and any(model.lower().startswith(prefix.lower()) for prefix in prefixes):
+        return (reason or "{adapter} 不接受模型 {model}").format(adapter=name, model=model)
+    return None
 
 
 def configurable_names():

@@ -11,7 +11,7 @@ import re
 from stat import S_ISDIR
 from uuid import uuid4
 
-from .adapters.registry import policy_for
+from .adapters.registry import policy_for, refused_model_reason
 from .db import connect, initialize, transaction
 
 BRAND_NAME = "zMAHarness"
@@ -211,6 +211,9 @@ class GrantLedger:
                     or not valid_id(TARGET_ID, target["adapter"]) or not valid_id(TARGET_ID, target["model"])
                     or target["effort_max"] not in EFFORT_LEVELS):
                 raise LedgerError(2, "Invalid model target")
+            refused = refused_model_reason(target["adapter"], target["model"])
+            if refused is not None:
+                raise LedgerError(2, refused)
             if enabled_adapters is not None and target["adapter"] not in enabled_adapters:
                 raise LedgerError(14, "Adapter is not enabled in local settings")
             if EFFORT_LEVELS.index(target["effort_max"]) > EFFORT_LEVELS.index(self.limits.max_effort):

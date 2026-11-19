@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from mah import cli
 from mah.adapters.agy_print import AgyPrintAdapter
+from mah.adapters.registry import REFUSED_MODELS
 from mah.context_bundle import bundle_manifest, prepare_bundle
 from mah.db import SCHEMA
 from mah.ledger import GrantLedger, LedgerError, dump
@@ -664,6 +665,38 @@ class AgyProcessTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 10)
         self.assertEqual(self.started, [])
         self.assertIsNone(self.ledger.get_run(self.run))
+
+    def test_orchestrator_model_is_refused_before_probe_reservation_or_launch(self):
+        with patch.object(self.adapter, "probe", side_effect=AssertionError("must not probe")), patch(
+                "mah.adapters.agy_print.Popen", side_effect=AssertionError("must not start a model")):
+            for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro"):
+                with self.subTest(model=model), self.assertRaises(LedgerError) as error:
+                    self.manager.dispatch(
+                        self.adapter, grant_id=self.grant, run_id=self.run, repo_root=self.repo, template="review",
+                        model=model, effort="low", task=self.task_bytes(), workspace=self.workspace,
+                        worktree_root=self.trees, timeout_s=5)
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("子代理", str(error.exception))
+        self.assertIsNone(self.ledger.get_run(self.run))
+        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 0)
+
+    def test_orchestrator_grant_from_before_the_rule_still_cannot_dispatch(self):
+        model = "gemini-pro-orchestrator-neon"
+        card_id = f"card-{uuid4().hex}"
+        # A card stored before the refusal existed: create it without the refusal entry.
+        with patch.dict(REFUSED_MODELS, clear=True):
+            card = self.ledger.create_card(
+                card_id, repo_root=self.repo, task_key=card_id, trigger_ids=["T5"], prepare_mode="explicit",
+                allowed_templates=["review"], allowed_targets=[{"adapter": "agy-print", "model": model, "effort_max": "low"}],
+                max_dispatches=1, ttl_minutes=10, timeout_seconds=5, workspace_path=self.workspace,
+                task_sha256=sha256(self.task_bytes()).hexdigest())
+            grant = self.ledger.approve(card_id, card, via="manual_cli")
+        with patch("mah.adapters.agy_print.Popen", side_effect=AssertionError("must not start a model")):
+            with self.assertRaises(LedgerError) as error:
+                self.run_dispatch(grant_id=grant, model=model)
+        self.assertEqual(error.exception.code, 2)
+        self.assertIsNone(self.ledger.get_run(self.run))
+        self.assertEqual(self.ledger.get_grant(grant)["used_dispatches"], 0)
 
     def test_scoped_grant_rejects_different_timeout_before_launch(self):
         self.assert_dispatch_denied(grant_id=self.make_grant(timeout=60), timeout_s=120)

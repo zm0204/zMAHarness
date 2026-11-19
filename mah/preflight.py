@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 from tempfile import mkstemp
 
-from .adapters.registry import executable_lookup, executable_missing_reason
+from .adapters.registry import executable_lookup, executable_missing_reason, refused_model_reason
 from .config import HOME_VARIABLE, ConfigError, adapter_enabled, default_config_path, load_config, \
     sandbox_redirect_detected
 from .executable_path import EXECUTABLE_INSIDE_PROJECT, inside_roots
@@ -53,14 +53,18 @@ def git_toplevel(path):
     return None, _git_failed(first_line or f"git 結束碼 {result.returncode}，沒有錯誤訊息")
 
 
-def preflight(repo, adapter, config_path=None):
+def preflight(repo, adapter, config_path=None, model=None):
     """No ledger and no writes under zMAHarness or the project. Returns the report.
 
     For claude-print and codex-exec it runs the CLI's own login status command (no inference request);
     that CLI may refresh files in its own home folder. For codex-exec it also reads the ChatGPT quota
     (read-only, no inference) and blocks only when the quota is confirmed exhausted.
+    With a model ID it also reports a model the Adapter refuses, so the card is never proposed.
     """
     reasons = []
+    refused = refused_model_reason(adapter, model) if model is not None else None
+    if refused is not None:
+        reasons.append(refused)
     repo_root, git_reason = git_toplevel(repo)
     if git_reason is not None:
         reasons.append(git_reason)

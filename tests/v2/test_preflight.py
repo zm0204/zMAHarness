@@ -177,6 +177,23 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual((code, report["sandbox_redirect_detected"], report["needs_unsandboxed_dispatch"]),
                          (0, True, True))
 
+    def test_orchestrator_model_is_not_ok_for_agy(self):
+        self.write_config()
+        for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro"):
+            with self.subTest(model=model):
+                code, report = self.assert_read_only(self.repo, "--adapter", "agy-print", "--model", model)
+                self.assertEqual((code, report["ok"]), (30, False))
+                self.assertTrue(any(reason.startswith(f"agy-print 不接受 Orchestrator 模型 {model}：")
+                                    for reason in report["reasons"]))
+
+    @WINDOWS
+    def test_ordinary_gemini_model_keeps_the_report_ok(self):
+        self.write_config()
+        for model in ("gemini-4-neon-xhigh", "gemini-4-hydrogen-high", "gemini-4-argon-medium"):
+            with self.subTest(model=model):
+                code, report = self.assert_read_only(self.repo, "--adapter", "agy-print", "--model", model)
+                self.assertEqual((code, report["ok"], report["reasons"]), (0, True, []))
+
     def test_unknown_adapter_is_an_argparse_error(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit_error:
             cli.main(["preflight", "--repo", str(self.repo), "--adapter", "unknown-x"])

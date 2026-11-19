@@ -18,6 +18,7 @@ from ..ledger import (AGY_OUTPUT_CONFLICT, PRE_SUBMIT_REASONS, READ_ONLY_TEMPLAT
                       TERMINAL_STATES, TEMPLATES,
                       LedgerError, valid_id)
 from ..run_manager import _bytes, _publish, _read, record_observation
+from .registry import refused_model_reason
 from ..verifier import Verifier, requirements_for
 # Shared helpers, re-exported under their historical names (imports and test patch targets use them).
 from .cli_common import (CAPTURE_STATES, WORKER_ENV, InvocationPlan, _bundle_workspace_snapshot,  # noqa: F401
@@ -310,6 +311,11 @@ class AgyPrintAdapter(CliWorkerAdapter):
                            worktree_root, timeout_s, requirements):
         if template not in TEMPLATES or not valid_id(TARGET_ID, model) or effort not in AGY_EFFORTS:
             raise LedgerError(2, "Invalid agy template, model or effort")
+        # Before the --version/--help probe and before the Grant is reserved: a card created before this
+        # rule existed must not start an Orchestrator either.
+        refused = refused_model_reason(self.id, model)
+        if refused is not None:
+            raise LedgerError(2, refused)
         if not isinstance(task, bytes) or not 0 < len(task) <= self.max_task_bytes:
             raise LedgerError(16, "Task exceeds the configured limit or is empty")
         task_text = task.decode("utf-8-sig")

@@ -104,6 +104,26 @@ class LedgerTests(unittest.TestCase):
                 self.assert_code(16, self.make_card, **overrides)
         self.assertEqual(self.count("cards"), 0)
 
+    def test_agy_orchestrator_card_is_refused_before_it_is_stored(self):
+        for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro", "Gemini-Pro-Orchestrator-Neon"):
+            with self.subTest(model=model):
+                with self.assertRaises(LedgerError) as failure:
+                    self.make_card(allowed_targets=[{"adapter": "agy-print", "model": model, "effort_max": "high"}])
+                self.assertEqual(failure.exception.code, 2)
+                self.assertIn(f"Orchestrator 模型 {model}", str(failure.exception))
+                self.assertIn("子代理", str(failure.exception))
+        self.assertEqual(self.count("cards"), 0)
+
+    def test_agy_neon_hydrogen_and_other_adapters_are_not_refused(self):
+        scope = dict(timeout_seconds=60, workspace_path=self.directory, task_sha256=sha256(b"task").hexdigest())
+        for index, (adapter, model) in enumerate((
+                ("agy-print", "gemini-4-neon-high"), ("agy-print", "gemini-4-hydrogen-high"),
+                ("agy-print", "gemini-pro-neon"), ("legacy-fixture", "gemini-pro-orchestrator-neon"))):
+            with self.subTest(adapter=adapter, model=model):
+                self.make_card(f"card-ok-{index}", task_key=f"ok-{index}", **scope,
+                               allowed_targets=[{"adapter": adapter, "model": model, "effort_max": "high"}])
+        self.assertEqual(self.count("cards"), 4)
+
     def test_expiration_blocks_at_boundary(self):
         grant = self.approve()
         self.now += timedelta(minutes=1)

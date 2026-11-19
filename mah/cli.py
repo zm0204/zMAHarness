@@ -45,6 +45,7 @@ def parser():
     check = groups.add_parser("preflight", help="出卡前的唯讀可行性檢查")
     check.add_argument("--repo", type=Path, required=True)
     check.add_argument("--adapter", choices=dispatchable_names(), default=DEFAULTS["defaults"]["review"]["adapter"])
+    check.add_argument("--model", help="選填；指定時一併檢查 Adapter 是否接受這個模型 ID")
     card = groups.add_parser("card").add_subparsers(dest="action", required=True)
     create = card.add_parser("create")
     create.add_argument("--file", required=True, type=Path)
@@ -293,7 +294,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         if args.group == "preflight":
-            report = preflight(args.repo, args.adapter, args.config)
+            report = preflight(args.repo, args.adapter, args.config, args.model)
             output(report)
             return 0 if report["ok"] else 30
         config = load_config(args.config)
