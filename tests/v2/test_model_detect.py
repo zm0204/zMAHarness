@@ -215,7 +215,7 @@ class DetectionCacheAndModelsReportTests(unittest.TestCase):
             default_report = models_report(self.config)
             all_report = models_report(self.config, include_all=True)
 
-        self.assertNotIn("quota", default_report)
+        self.assertIn("quota", default_report)
         self.assertEqual(default_report["detection"]["agy-print"]["status"], "ok")
         self.assertEqual(default_report["detection"]["agy-print"]["detected_count"], 23)
         self.assertEqual(default_report["detection"]["agy-print"]["unclassified_count"], 1)
@@ -314,6 +314,25 @@ class DetectionCacheAndModelsReportTests(unittest.TestCase):
         by_key_missing = {item["key"]: item for item in missing_report["models"]}
         self.assertFalse(by_key_missing["gemini-4-neon"]["available"])
         self.assertFalse(by_key_missing["claude-sonnet"]["available"])
+
+    def test_agy_and_codex_listers_use_config_parent_as_cwd(self):
+        seen_cwds = {}
+
+        def fake_run(argv, **kwargs):
+            seen_cwds[tuple(argv[1:])] = kwargs.get("cwd")
+            if argv[1:] == ["models"]:
+                return _completed(0, stdout=AGY_FIXTURE)
+            if argv[1:] == ["debug", "models"]:
+                return _completed(0, stdout=CODEX_FIXTURE)
+            raise AssertionError(f"unexpected subprocess: {argv}")
+
+        with patch("mah.model_detect.subprocess.run", side_effect=fake_run):
+            list_agy_models(self.config, self.agy)
+            list_codex_models(self.config, self.codex)
+
+        expected_cwd = str(self.config.path.parent)
+        self.assertEqual(seen_cwds[("models",)], expected_cwd)
+        self.assertEqual(seen_cwds[("debug", "models")], expected_cwd)
 
 
 if __name__ == "__main__":

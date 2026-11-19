@@ -93,16 +93,16 @@ QUOTA_MESSAGES = (
     {"method": "initialized"},
     {"id": 2, "method": "account/rateLimits/read"},
 )
-QUOTA_TIMEOUT_SECONDS = 20
+QUOTA_TIMEOUT_SECONDS = 10
 
 
-def _quota_reply(executable, environment, timeout):
+def _quota_reply(executable, environment, timeout, *, cwd=None):
     """The JSON-RPC response to request 2, or None on any failure. Never raises."""
     import threading
 
     try:
         process = subprocess.Popen([str(executable), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, shell=False, env=environment)
+                                   stderr=subprocess.DEVNULL, shell=False, env=environment, cwd=cwd)
     except (OSError, ValueError):
         return None
     replies = []
@@ -157,20 +157,25 @@ def _reset_time(result):
     return max(times) if times else None
 
 
-def codex_quota_status(executable, *, timeout=QUOTA_TIMEOUT_SECONDS):
-    """("exhausted", reset epoch or None), ("available", None) or ("unknown", detail). Never raises."""
-    from .adapters.codex_exec import codex_environment
+def _quota_reset_epoch(until):
+    if until is None:
+        return None
+    try:
+        return int(datetime.fromisoformat(until).timestamp())
+    except ValueError:
+        return None
 
-    reply = _quota_reply(executable, codex_environment(), timeout)
-    result = reply.get("result") if isinstance(reply, dict) else None
-    if not isinstance(result, dict):
-        return "unknown", "無法查詢" if reply is None else "回應格式無法解讀"
-    allowed = result.get("ordinaryUsageAllowed")
-    if allowed is False:
-        return "exhausted", _reset_time(result)
-    if allowed is True:
+
+def codex_quota_status(executable, *, timeout=QUOTA_TIMEOUT_SECONDS, cwd=None):
+    """("exhausted", reset epoch or None), ("available", None) or ("unknown", detail). Never raises."""
+    from .quota import query_chatgpt_quota
+
+    state = query_chatgpt_quota(executable, cwd=cwd, timeout=timeout)
+    if state.state == "exhausted":
+        return "exhausted", _quota_reset_epoch(state.until)
+    if state.state in ("ok", "tight"):
         return "available", None
-    return "unknown", "回應格式無法解讀"
+    return "unknown", state.detail or "無法查詢"
 
 
 def local_time(epoch):
@@ -183,20 +188,28 @@ def local_time(epoch):
     return moment.strftime("%Y-%m-%d %H:%M（UTC%z）")
 
 
-def codex_quota_reasons(executable):
+def codex_quota_reasons(executable, *, cwd=None, quota_state=None):
     """Block only when the quota is confirmed exhausted; a failed or unclear query never blocks."""
-    state, value = codex_quota_status(executable)
+    if quota_state is not None:
+        if quota_state.state == "exhausted":
+            return [f"ChatGPT 額度已用完，重設時間 {local_time(_quota_reset_epoch(quota_state.until))}"]
+        return []
+    state, value = codex_quota_status(executable, cwd=cwd)
     return [f"ChatGPT 額度已用完，重設時間 {local_time(value)}"] if state == "exhausted" else []
 
 
-def codex_reasons(executable):
-    return codex_login_reasons(executable) or codex_quota_reasons(executable)
+def codex_reasons(executable, *, cwd=None, quota_state=None):
+    return codex_login_reasons(executable) or codex_quota_reasons(executable, cwd=cwd, quota_state=quota_state)
 
 
 LOGIN_CHECKS = {"claude-print": claude_login_reasons, "codex-exec": codex_reasons}
 
 
-def login_reasons(adapter, executable):
+def login_reasons(adapter, executable, *, cwd=None, quota_state=None):
     """Reasons that block the card; empty when the Adapter has no login check or uses a subscription."""
     check = LOGIN_CHECKS.get(adapter)
-    return [] if check is None else check(executable)
+    if check is None:
+        return []
+    if check is codex_reasons:
+        return check(executable, cwd=cwd, quota_state=quota_state)
+    return check(executable)

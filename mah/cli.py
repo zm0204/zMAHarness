@@ -342,6 +342,12 @@ def main(argv=None):
         manager.scan()
         if args.group == "dispatch":
             run = dispatch_run(manager, config, args)
+            try:
+                from .quota import refresh_routing_cache_best_effort
+
+                refresh_routing_cache_best_effort(config)
+            except Exception:
+                pass
             output(run)
             return run_exit_code(run)
         if args.group == "status":

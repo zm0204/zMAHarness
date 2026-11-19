@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import tempfile
 
 from .adapters import registry
 from .atomic_io import atomic_write
@@ -64,6 +65,14 @@ class DetectionRecord:
 
 def cache_path(config):
     return config.values["paths"]["state_dir"] / CACHE_FILENAME
+
+
+def query_cwd(config):
+    """Working directory for read-only CLI queries: zMAHarness config dir, never the target project."""
+    if config is None:
+        return None
+    directory = Path(config.path).parent
+    return str(directory) if directory.is_dir() else tempfile.gettempdir()
 
 
 def executable_key(executable):
@@ -140,7 +149,7 @@ def list_agy_models(config, executable, *, timeout=DETECT_TIMEOUT_SECONDS):
         result = subprocess.run(
             [str(executable), "models"],
             stdin=subprocess.DEVNULL, capture_output=True, shell=False,
-            env=_worker_environment(), timeout=timeout,
+            env=_worker_environment(), cwd=query_cwd(config), timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return ListResult("unknown", detail=f"{type(exc).__name__}: {exc}")
@@ -169,7 +178,7 @@ def list_codex_models(config, executable, *, timeout=DETECT_TIMEOUT_SECONDS):
         result = subprocess.run(
             [str(executable), "debug", "models"],
             stdin=subprocess.DEVNULL, capture_output=True, shell=False,
-            env=codex_environment(), timeout=timeout,
+            env=codex_environment(), cwd=query_cwd(config), timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return ListResult("unknown", detail=f"{type(exc).__name__}: {exc}")
@@ -495,7 +504,9 @@ def _format_models_section(catalog, records, claude_info, *, max_effort):
 
 
 def models_report(config, *, refresh=False, include_all=False, repo_catalog_path=None, now=None):
-    """Build the JSON report for `mah models` (3d-1: catalog + detection, quota added in 3d-2)."""
+    """Build the JSON report for `mah models` (catalog + detection + quota)."""
+    from .quota import get_quota_states
+
     catalog, warnings = load_catalog(local_path=local_catalog_path(config), repo_path=repo_catalog_path)
     ttl_hours = catalog.routing.detect_ttl_hours if catalog is not None else 12
 
@@ -507,13 +518,15 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
                     adapters.append(route.adapter)
 
     lister_adapters = [a for a in adapters if a != "claude-print"]
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         detect_future = pool.submit(
             detect_adapters, config, lister_adapters, ttl_hours=ttl_hours, refresh=refresh, now=now,
         )
         claude_future = pool.submit(_claude_alias_status, config)
+        quota_future = pool.submit(get_quota_states, config, catalog, None, refresh=refresh, now=now)
         records = detect_future.result()
         claude_info = claude_future.result()
+        quota_states, quota_warnings = quota_future.result()
 
     # Keep a consistent ordering across adapters.
     ordered_records = {}
@@ -524,12 +537,15 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
             ordered_records[adapter] = records[adapter]
 
     max_effort = config.values["limits"]["max_effort"]
+    all_warnings = [*warnings, *quota_warnings]
     return {
         "catalog": {
             "updated": catalog.updated if catalog is not None else None,
             "local_overrides": catalog.local_overrides if catalog is not None else False,
             "warnings": warnings,
         },
+        "warnings": all_warnings,
         "detection": _format_detection_section(catalog, ordered_records, claude_info, include_all=include_all),
+        "quota": {pool_name: state.to_dict() for pool_name, state in quota_states.items()},
         "models": _format_models_section(catalog, ordered_records, claude_info, max_effort=max_effort),
     }

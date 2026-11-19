@@ -10,6 +10,7 @@ from .config import HOME_VARIABLE, ConfigError, adapter_enabled, default_config_
 from .executable_path import EXECUTABLE_INSIDE_PROJECT, inside_roots
 from .ledger import TARGET_ID, LedgerError, valid_id
 from .login_status import login_reasons
+from .model_detect import query_cwd
 
 INVALID_MODEL_ID = ("模型 ID {model!r} 格式不符：須以英文字母或數字開頭，只能包含英文字母、數字與 _ . : / -，"
                     "長度 1～128 字元。card create 會以結束碼 2 拒絕這個 ID。")
@@ -106,7 +107,7 @@ def preflight(repo, adapter, config_path=None, model=None):
         if inside_roots(executable, roots):
             reasons.append(EXECUTABLE_INSIDE_PROJECT.format(path=Path(executable).resolve()))
         else:
-            reasons.extend(login_reasons(adapter, executable))
+            reasons.extend(login_reasons(adapter, executable, cwd=query_cwd(config)))
 
     redirected = sandbox_redirect_detected()
     return {
