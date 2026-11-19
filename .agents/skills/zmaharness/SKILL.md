@@ -120,6 +120,8 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 | Claude Opus 5.5 | `claude-opus-5-5-low` | `claude-opus-5-5-medium` | `claude-opus-5-5-high` |
 | Claude Sonnet（`claude-print`） | `sonnet` + `--effort low` | `sonnet` + `--effort medium` | `sonnet` + `--effort high` |
 | Claude Opus（`claude-print`） | `opus` + `--effort low` | `opus` + `--effort medium` | `opus` + `--effort high` |
+| GPT 6.2 Sol（`codex-exec`） | `gpt-6.2-sol` + `--effort low` | `gpt-6.2-sol` + `--effort medium` | `gpt-6.2-sol` + `--effort high` |
+| GPT 6.2 Astra（`codex-exec`） | `gpt-6.2-astra` + `--effort low` | `gpt-6.2-astra` + `--effort medium` | `gpt-6.2-astra` + `--effort high` |
 | GPT 6.1 Terra（`codex-exec`） | `gpt-6.1-terra` + `--effort low` | `gpt-6.1-terra` + `--effort medium` | `gpt-6.1-terra` + `--effort high` |
 | GPT 6.1 Sol（`codex-exec`） | `gpt-6.1-sol` + `--effort low` | `gpt-6.1-sol` + `--effort medium` | `gpt-6.1-sol` + `--effort high` |
 | GPT 6 Luna（`codex-exec`） | `gpt-6-luna` + `--effort low` | `gpt-6-luna` + `--effort medium` | `gpt-6-luna` + `--effort high` |
@@ -127,7 +129,8 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 `agy-print` 的模型 ID 帶有 effort 尾綴。`claude-print` 和 `codex-exec` 的模型 ID 固定，effort 另用 `--effort` 指定。
 只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
 指定 GPT 模型（例如「用 luna」、「換 gpt-6.1-terra」）時用 `codex-exec`，模型寫完整 ID（`luna` 即 `gpt-6-luna`），
-effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過的 GPT 模型：`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；帳號實際可用的模型仍以本機 `codex debug models` 為準。
+effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過的 GPT 模型：`gpt-6.2-sol`、`gpt-6.2-astra`、`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；帳號實際可用的模型仍以本機 `codex debug models` 為準。
+6.2 Sol、6.2 Astra 只在使用者指定時使用，卡片的預設建議維持 `gpt-6.1-terra`。
 每次派工前都會自動探測工具宣告；新版 CLI 註冊的未知工具會被拒絕。原本是 Disposable Worktree 時須先改提 Context-Bundle。
 
 只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
