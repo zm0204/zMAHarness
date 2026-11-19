@@ -16,18 +16,27 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | T4 | 既有 Codex 額度快照達 `t4_codex_used_percent`，且有低成本驗收方法。缺快照時不用 T4 |
 | T5 | 使用者主動要求協作，或呼叫 `$zmaharness`（Codex）/`/zmaharness`（Claude Code） |
 
-## 出卡前檢查
+## 出卡前檢查與選模
 
-決定提議協作時，出卡前先執行一次唯讀檢查：
+決定提議協作後，先依檔案大小與可讀範圍決定模式，再判斷任務與等級，然後只執行一次：
 
-`python -B -m mah preflight --repo <目標專案根目錄> --adapter <Adapter>`
+`python -B -m mah route --repo <目標專案根目錄> --task <review|second_opinion|research> --level <light|standard|deep> --mode <bundle|worktree> --controller <codex|claude|other>`
 
-- 輸出 JSON 的 `ok` 為 `false`（結束碼 30）時不出卡。用一句話告訴使用者原因（取自 `reasons`），然後由主控 Agent 自己繼續原任務。
-- `--adapter` 依下方「Adapter 路由」決定。Claude 模型先檢查 `claude-print`，不 ok 時改檢查 `agy-print`；兩個都不 ok 就不出卡。
-  GPT 模型檢查 `codex-exec`。若 GPT 是主控主動提議的候選且檢查不 ok，則回到原推薦規則並檢查該 Adapter。
-- `--repo` 使用主控目前工作資料夾所屬的 Git 專案。要審查的檔案不在目前的工作資料夾內時，不出卡，請使用者在該專案開啟主控。
-- 雲端硬碟、網頁等不在本機 Git 專案裡的資料，不在協作範圍內，不出卡。
-- `needs_unsandboxed_dispatch` 會影響卡片的【授權限制】，規則見下方「對話內提議」。
+| 等級 | 何時用 |
+| --- | --- |
+| `light` | T3 大量資料整理、小型常規檢查 |
+| `standard` | T2 一般高風險 Review、研究需要整合較多線索 |
+| `deep` | T2 跨模組交互複雜、T1 第二意見、需要異質視角的深度推理 |
+
+- `--controller`：Codex 主控填 `codex`，Claude Code 主控填 `claude`，其他填 `other`。
+- `--repo` 使用主控目前工作資料夾所屬的 Git 專案。目標不在目前工作資料夾內，或屬於雲端硬碟、網頁等非本機 Git 專案資料時，不在協作範圍內，不出卡。
+- `ok` 為 `false`（結束碼 30）或 `card` 為 `false` 時不出卡，用一句話說明 `reasons` 後由主控自己繼續原任務。
+- 【建議模型】與選項 2 用 `recommended.display`，選項 3 用 `alternate.display`；`alternate` 為 `null` 時省略選項 3。卡片只顯示 `display`，不顯示 Adapter 名稱。
+- `note` 不為 `null` 時，把它（依使用者語言）放進【為什麼建議協作？】。
+- `needs_unsandboxed_dispatch` 為 `true` 時，【授權限制】加「派工時需核准一次沙盒外執行」。
+- 建卡與派工的 Adapter、模型 ID、effort 一律照抄輸出的 `adapter`、`model`、`effort`。
+- `warnings` 不為空時，在卡片外用一句話轉告使用者一次。
+- `/usage` 額度查詢只能由 `mah` 內部透過程式呼叫，**主控不得自己在 shell 執行含 `/usage` 的指令**（特別禁止在 Git Bash 執行）。
 
 ## 對話內提議
 
@@ -41,11 +50,11 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 問題文字一律使用純文字，禁止 Markdown 與「｜」分隔符號。
 
 - 【觸發原因】例如「【觸發原因】T5 · 使用者主動要求」。
-- 【建議模型】顯示主控 Agent 依本次任務類型、觸發原因及難度選定的模型與 effort。
+- 【建議模型】填 `mah route` 輸出的 `recommended.display`。
 - 【任務與範圍】顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
-- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。這是對話核准（`codex_prompt`）與 Context-Bundle 的固定次數；本機設定 `approval.mode = "manual_cli"` 時，Disposable Worktree 卡片可到 `limits.max_dispatches_per_grant`，此時顯示實際卡片的次數，並註明「需在終端機親手核准」。出卡前檢查的 `needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
-- 【為什麼建議協作？】用一句白話說明本次協作的收益及選模原因，不提私人專案名稱。
+- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。這是對話核准（`codex_prompt`）與 Context-Bundle 的固定次數；本機設定 `approval.mode = "manual_cli"` 時，Disposable Worktree 卡片可到 `limits.max_dispatches_per_grant`，此時顯示實際卡片的次數，並註明「需在終端機親手核准」。`needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
+- 【為什麼建議協作？】用一句白話說明本次協作的收益及選模原因，不提私人專案名稱；若 `mah route` 回傳 `note`，併入本欄。
 
 依提問工具實際提供的欄位排版。下方選項範本定義各選項的意思，依工具能力分配到相應欄位。
 
@@ -61,36 +70,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
   協作選項在說明中列出該選項的模型 · effort、任務、授權。
 - **只有問題文字與選項字串**（例如 Codex 一般模式的 `request_user_input_async`）。
   問題文字放完整五項，每項一行。每個協作選項的字串都須寫出模型 ID 和 effort，
-  例如「繼續協作（建議：gemini-4-neon-medium · medium）」。不得只寫「繼續協作（建議）」或「繼續協作（備選）」。
-
-依下表選擇模型。T4、T5 也依實際任務的複雜度與所需視角判斷。
-
-| 任務 | 建議模型與 effort |
-| --- | --- |
-| Claude Code 主控的 Review／T1 第二意見，符合 Context-Bundle | 本機 `codex debug models` 確認 GPT 可用，且 `codex-exec` 和 `agy-print` 均通過出卡前檢查時，Review 用 `gpt-6.1-terra · medium`，T1 用 `gpt-6.1-terra · high`，提供不同模型家族的程式審查。 |
-| T3 大量資料整理／研究，或小型常規檢查 | `gemini-3.8-flash-low · low`。需要整合較多線索時用 `gemini-3.8-flash-medium · medium`。 |
-| T2 核心邏輯／跨模組高風險 Review | `gemini-4-neon-medium · medium`。跨模組交互複雜時用 `gemini-4-neon-high · high`。 |
-| T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `sonnet · high`、`opus · high` 或 `gemini-4-neon-high · high`，依所需視角與深度選擇。 |
-
-**Adapter 路由。** Gemini 系列用 `agy-print`。Claude 系列優先用 `claude-print`，模型寫 Claude 的名稱（`sonnet`、`opus`）加上 effort。
-`claude-print` 的出卡前檢查不 ok 時，Claude 模型改用 `agy-print` 的 `claude-sonnet-5-5-<effort>`、`claude-opus-5-5-<effort>` ID；
-兩個都不 ok 就不出卡。卡片的【建議模型】只顯示模型與 effort，不顯示 Adapter 名稱。
-GPT 系列（例如 `gpt-6.1-terra`、`gpt-6-luna`）走 `codex-exec`，effort 只能 `low`、`medium`、`high`、`xhigh`。
-`codex-exec` 只支援 Context-Bundle 與唯讀模板；需要 Disposable Worktree 時不要建議 GPT 模型。
-**主控是 Codex 時，卡片不主動建議 `codex-exec`**（同家族，缺少異質視角），只有使用者明確指定 GPT 模型時才用。
-
-**Gemini 4 Neon 是 Gemini 審查的預設**（上表的 T2、T1 第二意見，以及下方的選項 3）。Neon 已有兩次實測：
-2026-11-19 在 agy 直接做全面審查，找到一個已證實的高風險問題；同日經 `agy-print` 真實派工（agy 1.5.12，Context-Bundle Review），
-Run 為 `SUCCEEDED`、驗收 `ACCEPTED`，輸出格式沒有衝突，因此設為預設。
-Gemini 4 Argon 保留在模型對照表與手打別名，列為可指定。Gemini 4 Hydrogen 只在使用者指定時使用。
-
-**Orchestrator 不可作為 Worker。** `gemini-pro-orchestrator-neon`、`gemini-pro-orchestrator-g1-pro` 等
-`gemini-pro-orchestrator-` 開頭的模型會自行派出子代理，`--settings` 的 deny 規則能否約束這些子代理尚未驗證，
-無法保證唯讀。不要建議或接受它；使用者手打指定時，回報這個原因並改提一般 Gemini 模型。
-`card create`、`dispatch` 會以結束碼 2 拒絕，`mah preflight --model <ID>` 也會回報不 ok。
-
-T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
-這類任務一般建議 `gemini-4-neon-high · high`，Claude Code 的 GPT 選項依上表。使用者手打指定時不受此限。
+  例如「繼續協作（建議：<recommended.display>）」。不得只寫「繼續協作（建議）」或「繼續協作（備選）」。
 
 依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。
 
@@ -100,14 +80,9 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 
 核准後嚴禁自動從 Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
 
-符合上表的 Claude Code 主控條件時，【建議模型】與選項 2 用表中的 GPT，選項 3 用 `gemini-4-neon-high · high`。
-其他情況，選項 2 顯示與卡片相同的建議模型。若選項 2 是 Neon、Argon 或 Claude，選項 3 用
-`gemini-3.8-flash-low · low` 供節省額度。若選項 2 是 Flash Low 或 Flash Medium，
-選項 3 用 `gemini-4-neon-high · high` 供一鍵升級。
-
 1. `不同意（由主控 Agent 自己繼續完成）`
-2. `繼續協作（主控 Agent 建議：<本次建議模型 · effort>）`
-3. `繼續協作（改用備選：<本次備選模型 · effort>）`
+2. `繼續協作（主控 Agent 建議：<recommended.display>）`
+3. `繼續協作（改用備選：<alternate.display>）`（`alternate` 為 `null` 時省略本選項）
 
 **T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
 點選或手打回覆。初始的 T5 請求或 `$zmaharness`／`/zmaharness` 呼叫只觸發提議。即使初始請求已指定模型與
@@ -118,44 +93,11 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 - **不同意**　主控 Agent 立即在本地繼續原任務，同一問題不再提議或追問。若已有待核准卡片，
   在收到回覆後以 `mah card reject <card_id>` 記錄拒絕。寫入失敗時仍繼續原任務。
 - **點選繼續協作**　採用選項標明的模型與 effort，維持卡片上的任務、範圍和授權限制。
-- **手打覆寫**　使用者可在自由輸入框指定任一可用模型、effort 或縮小檔案範圍，例如
-  「換 4argon」、「用 medium」或「只看 io.py」。明確覆寫視為同意協作，其餘欄位沿用卡片。
-  依本機 `agy models` 支援的模型 ID 對齊尾綴與 `--effort`，再用最終組合與範圍建立單次 Card 與 Grant。
-
-| 模型 | `low` | `medium` | `high` |
-| --- | --- | --- | --- |
-| Gemini 3.8 Flash | `gemini-3.8-flash-low` | `gemini-3.8-flash-medium` | `gemini-3.8-flash-high` |
-| Gemini 4 Argon | `gemini-4-argon-low` | `gemini-4-argon-medium` | `gemini-4-argon-high` |
-| Gemini 4 Neon | `gemini-4-neon-low` | `gemini-4-neon-medium` | `gemini-4-neon-high` |
-| Gemini 4 Hydrogen | `gemini-4-hydrogen-low` | `gemini-4-hydrogen-medium` | `gemini-4-hydrogen-high` |
-| Claude Sonnet 5.5 | `claude-sonnet-5-5-low` | `claude-sonnet-5-5-medium` | `claude-sonnet-5-5-high` |
-| Claude Opus 5.5 | `claude-opus-5-5-low` | `claude-opus-5-5-medium` | `claude-opus-5-5-high` |
-| Claude Sonnet（`claude-print`） | `sonnet` + `--effort low` | `sonnet` + `--effort medium` | `sonnet` + `--effort high` |
-| Claude Opus（`claude-print`） | `opus` + `--effort low` | `opus` + `--effort medium` | `opus` + `--effort high` |
-| GPT 6.2 Sol（`codex-exec`） | `gpt-6.2-sol` + `--effort low` | `gpt-6.2-sol` + `--effort medium` | `gpt-6.2-sol` + `--effort high` |
-| GPT 6.2 Astra（`codex-exec`） | `gpt-6.2-astra` + `--effort low` | `gpt-6.2-astra` + `--effort medium` | `gpt-6.2-astra` + `--effort high` |
-| GPT 6.1 Terra（`codex-exec`） | `gpt-6.1-terra` + `--effort low` | `gpt-6.1-terra` + `--effort medium` | `gpt-6.1-terra` + `--effort high` |
-| GPT 6.1 Sol（`codex-exec`） | `gpt-6.1-sol` + `--effort low` | `gpt-6.1-sol` + `--effort medium` | `gpt-6.1-sol` + `--effort high` |
-| GPT 6 Luna（`codex-exec`） | `gpt-6-luna` + `--effort low` | `gpt-6-luna` + `--effort medium` | `gpt-6-luna` + `--effort high` |
-
-Neon、Hydrogen 另有 xhigh（例如 `gemini-4-neon-xhigh`，搭配 `--effort xhigh`）。
-本機 TOML 的 `limits.max_effort` 預設 `high`，未調高時 xhigh 出卡會以結束碼 16 拒絕。
-
-`agy-print` 的模型 ID 帶有 effort 尾綴。`claude-print` 和 `codex-exec` 的模型 ID 固定，effort 另用 `--effort` 指定。
-只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
-指定 GPT 模型（例如「用 luna」、「換 gpt-6.1-terra」）時用 `codex-exec`，模型寫完整 ID（`luna` 即 `gpt-6-luna`），
-effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過的 GPT 模型：`gpt-6.2-sol`、`gpt-6.2-astra`、`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`；帳號實際可用的模型仍以本機 `codex debug models` 為準。
-6.2 Sol、6.2 Astra 只在使用者指定時使用，卡片的預設建議維持 `gpt-6.1-terra`。
-每次派工前都會自動探測工具宣告；新版 CLI 註冊的未知工具會被拒絕。原本是 Disposable Worktree 時須先改提 Context-Bundle。
-
-只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
-只輸入 `neon` 或 `4neon` 時，使用 `gemini-4-neon-high` 搭配 `--effort high`；
-只輸入 `hydrogen` 或 `4hydrogen` 時，使用 `gemini-4-hydrogen-high` 搭配 `--effort high`。
-只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，
-使用 `gemini-4-argon-medium` 搭配 `--effort medium`。
-
-若別名、effort 或檔名有歧義，先用單頁卡片澄清再等待回覆。若原模式無法維持縮小後的範圍，
-先提出符合新範圍的模式並等待核准。選定模型不可用時回報具體原因，由主控 Agent 繼續本地工作。
+- **手打覆寫**　使用者可在自由輸入框指定模型、別名、effort 或縮小檔案範圍（例如「換 4argon」、「用 medium」或「只看 io.py」）。
+  執行 `mah route ... --override "<字樣>" [--effort <effort>] --card-effort <卡片 effort> [--adapter <Adapter>]`。
+  `resolved` 為 `false` 時依 `choices` 用單頁卡片澄清；`ok` 為 `false` 時轉告 `reasons`（例如 Orchestrator 或模式不支援）並改提一般可用模型；
+  `note` 有額度提醒時照實告訴使用者。手打不受異質與額度排除限制，其餘欄位沿用卡片。
+  若原模式無法維持縮小後的範圍或所選模型不支援該模式，先提出符合新範圍與模式的卡片並等待核准。
 
 ## 輕量主控
 
@@ -172,12 +114,12 @@ effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過�
 
 1. `不同意（目前主控自己繼續）`
 2. `切換主控（建議：<suggested_controller>；請你在介面切換後回覆）`
-3. 依情境填入推薦表中的強模型與 effort。
-   - 仍在規劃、尚未開始實作，且本次要審查的是實作計畫時，使用 `繼續協作：用 <強模型 · effort> Review 目前計畫`。
+3. 以 `--level deep` 呼叫 `mah route`，取輸出的 `recommended` 作為強模型與 effort。
+   - 仍在規劃、尚未開始實作，且本次要審查的是實作計畫時，使用 `繼續協作：用 <recommended.display> Review 目前計畫`。
      使用既有 `review` 模板，把實作計畫寫進 `task.md`。Context-Bundle 將計畫放入任務指示，
      隨 `bundle create` 封裝。相關原始檔沿用核准的 Context-Bundle／Worktree 規則。
    - 其他情況沿用原觸發對應的任務類型與範圍，只更換模型與 effort。例如 T1 卡關時使用
-     `繼續協作：用 <強模型 · effort> 做 Second Opinion`。T5 指定 Research 或 Review 時沿用指定任務。
+     `繼續協作：用 <recommended.display> 做 Second Opinion`。T5 指定 Research 或 Review 時沿用指定任務。
 
 選項 1 立即繼續原任務，同一任務不再追問。選項 2 由使用者在介面切換後回覆，再繼續原任務。
 

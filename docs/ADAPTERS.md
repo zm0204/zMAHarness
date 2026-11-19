@@ -55,6 +55,8 @@
   `mah preflight --model` 把原因列入 `reasons`（模型 ID 不符合卡片建立的格式時，也會回報不 ok）；Adapter 的 `prepare_invocation` 應呼叫 `refused_model_reason` 並同樣以結束碼 2 拒絕，
   讓舊卡也在探測與預留 Grant 之前被擋下。目前 `agy-print` 拒絕 `gemini-pro-orchestrator-`：Orchestrator 會自行派出子代理，
   `--settings` 的 deny 規則能否約束子代理尚未驗證。
+- `MODEL_LISTERS[name]`（選用）：`lister(config, executable) -> ListResult(status, ids, efforts, detail)`，供 `mah models` 與 `mah route` 唯讀偵測帳號可用模型（不推論；失敗時回傳 `status="unknown"`，路由採 fail-open）。目前 `agy-print`、`codex-exec` 已註冊；`claude-print` 使用伺服器端別名（`sonnet`、`opus`），刻意不註冊。
+- `WORKSPACE_SUPPORT[name]`（選用）：`frozenset({"bundle", "worktree"})` 的子集，供 `mah route` 做模式篩選；未註冊預設同時支援 `bundle` 與 `worktree`。這是安全屬性，由程式註冊表維護，不放進模型目錄檔。目前 `codex-exec` 註冊為 `frozenset({"bundle"})`。`register(workspace_support=...)` 會檢查其為 `{"bundle", "worktree"}` 的子集，`unregister(name)` 會連同上述表一併移除。
 
 工廠與檢查函式請在函式內延遲 import Adapter 模組，避免 registry 載入時就載入 Worker 實作或造成循環 import。測試中可以用 `registry.register(...)` 與 `registry.unregister(...)` 暫時註冊。
 

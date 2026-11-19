@@ -12,8 +12,9 @@
 zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card JSON 的 `repo_root`
 皆指向目前開發的**目標 Git 專案根目錄**，例如你正在開發的專案。以目標專案的
 `git rev-parse --show-toplevel` 取得根目錄，使用實際目標專案準備資料及派工。
-使用 `agy-print` 派工時，全程僅使用命令列執行，禁止動用 Computer Use 查看 Antigravity GUI 設定、模型清單或查詢 `/usage` 額度。
-`codex-exec` 等 CLI Adapter 也遵循相同原則。實際模型和 effort 以卡片回覆確認的組合為準，日常派工略過前後額度查詢。
+使用 `agy-print` 派工時，全程僅使用命令列執行，禁止動用 Computer Use 查看 Antigravity GUI 設定、模型清單或查詢 `/usage` 額度；
+主控也不得自己在 shell 執行含 `/usage` 的指令（額度查詢僅由 `mah` 內部執行）。
+`codex-exec` 等 CLI Adapter 也遵循相同原則。實際的 Adapter、模型 ID 與 effort 一律照抄 `mah route`（或手打覆寫時 `mah route --override`）輸出的 `adapter`、`model`、`effort`。
 `agy-print` 的會話設定固定關閉 AI Credits。
 
 收到卡片的同意回覆後，用**單一 PowerShell 工具呼叫**執行步驟 1～3。收到派工結果並完成
@@ -24,12 +25,9 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 
 兩段 PowerShell 腳本都會寫入 zMAHarness 帳本並啟動 Worker，必須在沙盒外執行。依主控平台的機制請求核准：
 Codex 請求沙盒外或提權執行；Claude Code 使用一般的權限確認。被拒絕時回報原因，由主控 Agent 自己繼續原任務。
-使用 `claude-print` 時，Card 的 `allowed_targets` 與 `dispatch` 都用 `--adapter claude-print`，模型寫 `sonnet` 或 `opus`，
-effort 用 `--effort`。它只支援 Review、Second Opinion 與 Research，不支援 delegate-implement。
-使用 `codex-exec` 時，`allowed_targets` 與 `dispatch` 都用 `--adapter codex-exec`，模型寫完整 GPT ID（例如 `gpt-6-luna`），
-effort 只能 `low`、`medium`、`high`、`xhigh`。它只支援 Context-Bundle 與唯讀模板；Disposable Worktree
-會在預留 Grant 之前以結束碼 17 拒絕；Worker 輸出出現任何工具呼叫時，結果以 `codex_tool_item_observed` 判為失敗。
-delegate-implement 對所有 Worker 都是延後階段的功能，`card create` 會以結束碼 2 拒絕，不要提議。主控是 Codex 時不主動建議它，只有使用者明確指定才用。
+Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effort` 一律照抄 `mah route` 輸出的 `adapter`、`model`、`effort`（不得自行改寫模型 ID 或補尾綴）。
+所有 Worker 目前只支援唯讀分析模板（`review`、`second-opinion`、`research`）；`delegate-implement` 對所有 Worker 都是延後階段的功能，`card create` 會以結束碼 2 拒絕，不要提議。
+`codex-exec` 只支援 Context-Bundle，Disposable Worktree 會在預留 Grant 之前以結束碼 17 拒絕；Worker 輸出出現任何工具呼叫時，結果以 `codex_tool_item_observed` 判為失敗。
 `dispatch` 回報 `SUBMISSION_UNKNOWN` 且原因是 `process_not_started` 時，代表 Worker 沒有啟動，不會產生任何費用；
 可以直接執行 `python -B -m mah resolve <run_id> --mark-failed` 收尾，再請使用者決定要不要重新提議。
 `dispatch` 回傳 `14` 且訊息說明派工必須在沙盒外執行時，這次沒有建立 Run，也沒有消耗 Grant。

@@ -331,6 +331,56 @@ if ($python -and -not $pathsFailed) {
         Report-Check '通過' '舊資料清理' $detail
     }
     catch { Report-Check '需人工驗證' '舊資料清理' $_.Exception.Message }
+
+    # 檢查模型目錄與帳號偵測／額度摘要（不推論）；偵測失敗或有警告顯示「需人工驗證」，不算失敗（spec §7.5）。
+    try {
+        $modelsQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import load_config; from mah.model_detect import models_report; print(json.dumps(models_report(load_config(None)), ensure_ascii=False))'
+        $modelsRaw = & (Get-HarnessPathPython) -I -B -c $modelsQuery $PSScriptRoot
+        if ($LASTEXITCODE -ne 0) { throw '無法執行模型目錄與偵測檢查。' }
+        $modelsInfo = ($modelsRaw -join "`n") | ConvertFrom-Json
+        $cat = $modelsInfo.catalog
+        $catLabel = if ($cat.updated) { "目錄 $($cat.updated)（本機覆寫：$(if ($cat.local_overrides) { '有' } else { '無' })）" } else { '目錄無法載入' }
+        $detParts = New-Object System.Collections.Generic.List[string]
+        $detDegraded = (-not $cat.updated) -or (@($modelsInfo.warnings).Count -gt 0)
+        foreach ($prop in $modelsInfo.detection.PSObject.Properties) {
+            $name = $prop.Name
+            $val = $prop.Value
+            if ($val.status -eq 'ok') {
+                $detParts.Add("$name ok（$($val.detected_count)）")
+            }
+            elseif ($val.status -eq 'alias') {
+                $detParts.Add("$name $($val.login)")
+                if ($val.login -notin @('ok', 'disabled')) { $detDegraded = $true }
+            }
+            elseif ($val.status -eq 'disabled') {
+                $detParts.Add("$name disabled")
+            }
+            else {
+                $detParts.Add("$name $($val.status)")
+                $detDegraded = $true
+            }
+        }
+        $quotaParts = New-Object System.Collections.Generic.List[string]
+        if ($modelsInfo.quota) {
+            foreach ($prop in $modelsInfo.quota.PSObject.Properties) {
+                $qName = $prop.Name
+                $qVal = $prop.Value
+                if ($qName -like 'agy:*' -and $qVal.state -eq 'unknown') { continue }
+                $pctText = ''
+                if ($qVal.windows) {
+                    $pcts = @($qVal.windows | ForEach-Object { "$($_.used_percent)%" })
+                    if ($pcts.Count -gt 0) { $pctText = "（$($pcts -join '/')）" }
+                }
+                $quotaParts.Add("$qName $($qVal.state)$pctText")
+            }
+        }
+        $summaryParts = @($catLabel, "偵測 $($detParts -join '、')")
+        if ($quotaParts.Count -gt 0) { $summaryParts += "額度 $($quotaParts -join '、')" }
+        if (@($modelsInfo.warnings).Count -gt 0) { $summaryParts += "警告：$((@($modelsInfo.warnings) -join '；'))" }
+        $modelsStatus = if ($detDegraded) { '需人工驗證' } else { '通過' }
+        Report-Check $modelsStatus '模型目錄與偵測' (($summaryParts -join '；') + '。詳見 python -B -m mah models。')
+    }
+    catch { Report-Check '需人工驗證' '模型目錄與偵測' $_.Exception.Message }
 }
 
 $skillSource = Join-Path $PSScriptRoot '.agents/skills/zmaharness'

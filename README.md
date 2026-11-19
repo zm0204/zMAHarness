@@ -10,9 +10,9 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 
 - **作業系統**　Windows 11。
 - **主控**　[Codex Desktop](https://openai.com/codex/) 或 [Claude Code](https://code.claude.com/docs/) 二選一。
-- **Gemini Worker（預設）**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。agy 1.5.12 新增的 Gemini 4 Neon、Hydrogen（`gemini-4-neon-<effort>`、`gemini-4-hydrogen-<effort>`，另有 xhigh）中，Neon 經兩次實測（直接全面審查，以及 `agy-print` 真實派工 `SUCCEEDED`／`ACCEPTED`）後成為 Gemini 審查的預設：T2 用 `gemini-4-neon-medium`，跨模組交互複雜、T1 第二意見與備選選項用 `gemini-4-neon-high`。Argon、Hydrogen 為可指定。`gemini-pro-orchestrator-` 開頭的 Orchestrator 模型會自行派出子代理，`--settings` 的 deny 規則能否約束子代理尚未驗證，zMAHarness 一律拒絕（出卡與派工皆為結束碼 2）。
+- **Gemini Worker（預設）**　從 [Google 官方文件](https://antigravity.google/docs/install?tab=cli) 安裝 Antigravity CLI（`agy`），並使用個人 Google AI Pro 訂閱登入。可用的模型分級與帳號實際可用清單以 `python -B -m mah models` 為準。`gemini-pro-orchestrator-` 開頭的 Orchestrator 模型會自行派出子代理，`--settings` 的 deny 規則能否約束子代理尚未驗證，zMAHarness 一律拒絕（出卡與派工皆為結束碼 2）。
 - **Claude Worker（選用）**　以 `npm install -g @anthropic-ai/claude-code` 安裝 Claude Code CLI，再執行 `claude auth login`（或執行 `claude` 依畫面）以 Claude 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `ANTHROPIC_` 開頭的變數），出卡前也會以 `claude auth status` 確認 CLI 是以 Claude 訂閱帳號登入；未登入、登入已到期，或使用 API 金鑰、`apiKeyHelper`、第三方供應商時都不出卡。在這兩項檢查下，Worker 會使用你的 Claude 訂閱，跟你平常使用 Claude 共用同一份用量上限；實際計費仍以 Anthropic 的帳號設定為準。你自己在終端機執行 `claude` 時不受這些檢查保護。殘餘風險：使用者層級的 `~/.claude/CLAUDE.md` 與 `~/.claude/settings.json` 裡的 hooks 等使用者設定仍會載入 Worker，無法以參數關閉；請保持這些設定不含會寫檔、連網或改變指示的內容。zMAHarness 只啟動套件內的原生 `claude.exe`，不經由 npm 的 `claude.cmd` 轉呼。
-- **GPT Worker（選用）**　以 `npm install -g @openai/codex` 安裝 Codex CLI，再執行 `codex login` 以 ChatGPT 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `OPENAI_` 開頭的變數，以及 `CODEX_HOME` 以外的 `CODEX_` 變數），出卡前也會以 `codex login status` 確認 CLI 是以 ChatGPT 帳號登入；未登入或以 API 金鑰登入時都不出卡。在這兩項檢查下，Worker 會使用你的 ChatGPT 訂閱，跟你平常使用 Codex 共用同一份用量上限（`codex-exec` 與 Codex Desktop 共用同一份 ChatGPT 額度，Desktop 用完時 Worker 也會失敗）；實際計費仍以 OpenAI 的帳號設定為準。執行期間只要 JSONL 出現工具項目，該次結果一律判為不可驗收。`codex-exec` **只支援 Context-Bundle**。GPT code-mode 模型可能看見 `functions.exec`、`functions.wait`，兩者的執行端必須停用。每次派工前都會自動探測工具宣告，新版 CLI 註冊的未知工具會被拒絕。codex-cli 0.169.0 探測通過的模型：`gpt-6.2-sol`、`gpt-6.2-astra`、`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`（6.2 Sol、6.2 Astra 為可指定，預設建議仍是 `gpt-6.1-terra`；帳號實際可用的模型以 `codex debug models` 為準，探測表見 [Adapter 說明](docs/ADAPTERS.md#codex-exec)）。若 Codex 日後提供正式零工具入口，將改用該入口。Codex 仍可能載入全域 `AGENTS.md` 或在正式執行時刷新模型目錄，詳見 [Adapter 說明](docs/ADAPTERS.md#codex-exec)。最後實測版本是 codex-cli 0.169.0（2026-11-15 以 `gpt-6.1-terra` 與 `gpt-6.1-sol` 各跑一次 smoke，五項工具探測都失敗、JSONL 沒有工具執行項目，見 [smoke 紀錄](docs/v2/CODEX_SMOKE_TEST.md)）；不鎖定版本，升級後由派工前的功能與工具宣告檢查把關，不合格就拒絕派工。zMAHarness 只啟動套件內的原生 `codex.exe`，不經由 npm 的 `codex.cmd` 轉呼。
+- **GPT Worker（選用）**　以 `npm install -g @openai/codex` 安裝 Codex CLI，再執行 `codex login` 以 ChatGPT 帳號登入。zMAHarness 啟動 Worker 時不傳入任何 API 金鑰變數（移除所有 `OPENAI_` 開頭的變數，以及 `CODEX_HOME` 以外的 `CODEX_` 變數），出卡前也會以 `codex login status` 確認 CLI 是以 ChatGPT 帳號登入；未登入或以 API 金鑰登入時都不出卡。在這兩項檢查下，Worker 會使用你的 ChatGPT 訂閱，跟你平常使用 Codex 共用同一份用量上限（`codex-exec` 與 Codex Desktop 共用同一份 ChatGPT 額度，Desktop 用完時 Worker 也會失敗）；實際計費仍以 OpenAI 的帳號設定為準。執行期間只要 JSONL 出現工具項目，該次結果一律判為不可驗收。`codex-exec` **只支援 Context-Bundle**。GPT code-mode 模型可能看見 `functions.exec`、`functions.wait`，兩者的執行端必須停用。每次派工前都會自動探測工具宣告，新版 CLI 註冊的未知工具會被拒絕。帳號實際可用的 GPT 模型與思考程度以 `python -B -m mah models` 為準（探測細節見 [Adapter 說明](docs/ADAPTERS.md#codex-exec)）。若 Codex 日後提供正式零工具入口，將改用該入口。Codex 仍可能載入全域 `AGENTS.md` 或在正式執行時刷新模型目錄，詳見 [Adapter 說明](docs/ADAPTERS.md#codex-exec)。最後實測版本是 codex-cli 0.169.0（見 [smoke 紀錄](docs/v2/CODEX_SMOKE_TEST.md)）；不鎖定版本，升級後由派工前的功能與工具宣告檢查把關，不合格就拒絕派工。zMAHarness 只啟動套件內的原生 `codex.exe`，不經由 npm 的 `codex.cmd` 轉呼。
 - **本機工具**　Git、PowerShell 5.1 或 7、Python 3.11 以上。請將要使用的 `python.exe` 加入 PATH，並啟用 Python 使用者套件目錄。
 
 可在一般 PowerShell 終端機執行 `winget install -e --id Python.Python.3.13`，或從 python.org 安裝並勾選 **Add python.exe to PATH**。如果 `python.exe` 指向 `Microsoft\WindowsApps` 且無法執行，那是 Microsoft Store 的假捷徑，不是真的 Python；請到「設定 → 應用程式 → 進階應用程式設定 → 應用程式執行別名」關閉 `python.exe` 和 `python3.exe`，重開終端機後再執行安裝。
@@ -27,7 +27,7 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 | GPT（`codex-exec`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`；`gpt-6.2-sol · low`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`（2026-11-19）。只支援 Context-Bundle。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |
 
-Skill 所列模型 ID 以 2026 年 11 月的 `agy models` 為準，日後可能隨 CLI 或帳號可用模型變動。
+可用的模型目錄、帳號偵測結果與額度狀態以 `python -B -m mah models`（加 `--all` 列出未分級模型、`--refresh` 略過快取）為準。
 
 ## 名詞
 
@@ -75,7 +75,7 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 
 安裝後，用選定的主控開啟要工作的 Git 專案。Codex Desktop 用 `$zmaharness` 呼叫，Claude Code 用 `/zmaharness`。也可以直接交辦開發工作，符合協作條件時，主控會在對話中顯示 **【zMAHarness 協作建議】**，列出觸發原因、建議模型、任務與範圍、授權限制及協作理由。卡片和回覆使用你提問的語言，品牌、模型 ID 與指令名保留原文。
 
-出卡前，主控會先執行唯讀的 `mah preflight`，確認目標是本機 Git 專案、本機設定存在、Worker 已啟用且找得到執行檔；Claude 與 GPT Worker 另外確認 CLI 是以訂閱帳號登入。檢查不通過時不出卡，主控會說明原因並自己繼續原任務。若訊息是「不是 Git 專案」或「無法檢查 Git 專案」，也可能是因為目標不在主控目前的工作資料夾內，或被沙盒限制存取；請在該專案開啟主控後再試。
+出卡前，主控會執行一次唯讀的 `mah route`，一次完成既有 `mah preflight` 檢查（本機 Git 專案、本機設定、Worker 啟用與執行檔、Claude／GPT 訂閱登入）、帳號可用模型偵測與額度查詢，並依異質優先原則選出卡片的選項 2（建議）與選項 3（備選）；使用者手打指定模型或別名時則以 `mah route --override` 解析。檢查不通過或所有可用 Worker 都在冷卻／額度用完時不出卡，主控會說明原因並自己繼續原任務。`mah preflight` 仍保留供人工單項檢查。若訊息是「不是 Git 專案」或「無法檢查 Git 專案」，也可能是因為目標不在主控目前的工作資料夾內，或被沙盒限制存取；請在該專案開啟主控後再試。
 
 - **不同意**　主控立即自行繼續原任務，同一問題不會反覆詢問。
 - **繼續協作**　可選擇建議模型、備選模型，或手打調整模型、思考程度及縮小檔案範圍。主控依你的選擇準備資料與 Grant，派工後獨立驗收並決定是否採納。對話核准（`codex_prompt`）每張卡固定 1 次；終端機核准（`manual_cli`）的 Disposable Worktree 卡片最多可到 `limits.max_dispatches_per_grant`，Context-Bundle 卡片在兩種模式都是 1 次。
@@ -97,7 +97,11 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
 
 ## 本機設定與故障排除
 
-- **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits，略過派工前後的額度查詢。
+- **模型目錄、本機分級與額度感知**：
+  - **模型目錄**：由維護者管理的 [`mah/model_catalog.toml`](mah/model_catalog.toml) 定義模型分級、別名與任務路由；`git pull` 即生效，不必重新同步 Skill。表裡沒有的模型一律視為「未分級」，可手動指定但不會自動推薦。目錄只影響推薦，不影響既有卡片、Grant 與派工授權。執行 `python -B -m mah models` 可查看目錄、帳號實際偵測結果與額度狀態（`--all` 顯示完整未分級清單、`--refresh` 重新查詢）。
+  - **本機覆寫（`models.local.toml`）**：需要自訂分級或路由參數時，複製範本 [`models.local.example.toml`](models.local.example.toml) 到 `%LOCALAPPDATA%\zMAHarness\models.local.toml`（與 `harness.local.toml` 同目錄）。本機檔有語法或欄位錯誤時會整份忽略並退回內建目錄，不擋派工；內建目錄中的 `refused` 模型不可被本機取代。
+  - **額度感知與快取**：僅在出卡（`mah route`）與 `mah models` 查詢，且一律採 fail-open（查不到視為 `unknown`，不擋派工）。**GPT** 經 `codex app-server` 的 `account/rateLimits/read` 主動查詢（不推論、絕不使用額度重設券）；**Claude** 由 `mah` 內部以 `Popen` 呼叫 `claude -p "/usage" --output-format json --no-session-persistence` 主動查詢（主控不得自己在 shell 執行 `/usage`），附帶防計費檢查與 CLI 斷路器；**agy** 從帳本與失敗 Run 的 `agy.stderr.txt` 429 收據唯讀推導冷卻，不改帳本 schema。偵測與額度快取存在 `state\routing_cache.json`；每次沙盒外 `mah dispatch` 完成後會以 best-effort 刷新快取，讓沙盒內的出卡在查不到時仍可沿用 24 小時內尚未重設的 `tight`／`exhausted` 訊號。
+- **設定位置**：`%LOCALAPPDATA%\zMAHarness\harness.local.toml`，預設子目錄為 `state`、`worktrees`、`gui`。`agy-print` 和對話核准（`codex_prompt`）預設啟用。CLI 會話固定停用 AI Credits。
 - **舊資料清理**：不會自動清理。執行 `mah cleanup` 列出超過 `privacy.retain_run_dirs_days`（預設 30 天，可用 `--older-than-days N` 覆寫）的 Run 目錄與 Disposable Worktree；預設只列出（JSON），不寫入任何東西，確認清單後加 `--apply` 才會刪除，刪除無法復原。設定值 `0` 代表停用：只能列出，`--apply` 以結束碼 2 拒絕。`doctor.ps1` 會顯示目前可清理的 Run、Worktree 數量與大約佔用空間（只統計，不刪除）。
   - 只刪除已結束、而且已採納或拒絕（`accept`／`reject-result`）的 Run；`FAILED`、`FAILED_PRE_SUBMIT`、`CANCELLED`、`ABANDONED` 不需要採納決定。未結束的 Run、成功但尚未採納或拒絕的 Run、未到期的 Run 一律保留，清單會寫出原因。
   - Disposable Worktree 只在路徑是 `worktrees\<run_id>`、而且 HEAD 仍是快照提交或派工時的提交時，才會移除；不符合時 Worktree 和 Run 目錄都保留（`worktree_present`）。Worktree 內任何層級（包含被 Git 忽略的檔案）有符號連結、junction 或其他 reparse point 時保留（`worktree_contains_link`）；`git status` 顯示任何修改或未追蹤檔案時也保留（`worktree_dirty`）。這兩項檢查在列出時和實際刪除前各做一次。清理不使用 `git worktree remove`（Windows 上它會穿過 Worktree 內的 junction，刪掉外部目錄的檔案），而是以不跟隨連結的方式自己刪除目錄，再由下方的 `git worktree prune` 移除登記。沒有 Run 紀錄的孤兒 Worktree 也會列出，只有快照提交訊息相符的才會移除；仍被待核准卡片或有效 Grant 引用的保留（`awaiting_dispatch`）。
@@ -133,7 +137,9 @@ suggested_controller = "Codex Sol High"
 
 ## 路線圖
 
-以下項目**規劃中，尚未實作**。
+- **已完成（3d）**：模型目錄（`mah/model_catalog.toml`）、本機覆寫（`models.local.toml`）、帳號可用模型偵測（`mah models`）與額度感知路由（`mah route`）。
+
+以下項目**規劃中，尚未實作**：
 
 1. OpenAI 相容 API Worker（DeepSeek、Ollama 等本地模型）。僅支援 Context-Bundle，需使用者自行提供 API 金鑰。
 2. 委派實作（delegate-implement）：Worker 只在可拋棄的 worktree 內修改程式並產出 diff，由主控審查、自行套用並跑測試，絕不自動合併；每次派工仍需使用者同意。
