@@ -24,7 +24,7 @@ zMAHarness 採用 **Single-Agent First** 工作流。主控 Agent（日常預設
 | Gemini | **真實派工**：T5 觸發 作者的實際 Python 專案（表格比對工具）跨專案 Second Opinion，以 Context-Bundle 模式經 `agy-print` 請求 `gemini-3.8-flash-high · high`。主控獨立查核後採納建議，帳本記錄為 `SUCCEEDED`／`ACCEPTED`。**離線測試**：以 Flash Low Review 的去識別化真實收據驗證重收集與 Verifier。其他模型與思考程度、Research 模板的真實端到端流程尚未驗收；Disposable Worktree 的真實端到端流程已由 Claude（`agy-print`）驗收。 |
 | Claude（`agy-print`） | **真實派工已驗收**：`claude-sonnet-5-5-medium`，Disposable Worktree，Review，`SUCCEEDED`／`ACCEPTED`（2026-11-18），審查對象是 zMAHarness 本身。agy 搭配 Claude 時會在 JSON 前面加上說明文字，自 `28d8a9a` 起允許這種輸出。 |
 | Claude（`claude-print`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），`sonnet · medium` 與 `opus · medium`。兩筆皆為 Context-Bundle Review，`SUCCEEDED`／`ACCEPTED`。Opus 於 2026-11-15 驗收，Worker 回報的模型為 `claude-opus-5-5`。 |
-| GPT（`codex-exec`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`；`gpt-6.2-sol · low`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`（2026-11-19）。只支援 Context-Bundle。 |
+| GPT（`codex-exec`） | **真實派工已驗收**：作者的實際 Python 專案（表格比對工具），主控 Claude Code，`gpt-5.6-terra · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`；`gpt-6.2-sol · low` 與 `gpt-6.2-sol · medium`，Context-Bundle，`SUCCEEDED`／`ACCEPTED`（2026-11-19）。GPT 預設建議為 `gpt-6.2-sol`；`gpt-6.1-terra` 改為可指定，它唯一一次真實派工在 900 秒內沒有任何輸出而逾時。只支援 Context-Bundle。 |
 | Terra GUI | 曾以隔離環境實測 V1 檔案交接，V2 正式 GUI 派工尚未驗收。 |
 
 可用的模型目錄、帳號偵測結果與額度狀態以 `python -B -m mah models`（加 `--all` 列出未分級模型、`--refresh` 略過快取）為準。

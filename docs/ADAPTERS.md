@@ -141,7 +141,7 @@ Worker 的輸出只留在 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`�
   - 它在 JSONL 中顯示為一般的 `agent_message`，A7 的工具項目檢查看不出它被呼叫過（[`event_processor_with_jsonl_output.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/exec/src/event_processor_with_jsonl_output.rs#L484-L495)）。內容一樣要經過 `-o` 與 JSONL 一致性檢查、schema 與 Verifier。
   - extension 生命週期 hook：exec 的 in-process app-server 不論功能開關都會註冊 11 個 extension（[`app-server/src/extensions.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/extensions.rs#L52-L142)）。item 完成時只呼叫各 extension 的 `on_item_completed_with_metadata`（[`session/mod.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/session/mod.rs#L3102-L3145)），預設實作什麼都不做（[`contributors.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/ext/extension-api/src/contributors.rs#L249-L270)）。唯一覆寫它的是 goal extension：只在有 state DB 時註冊，且只在 Goals 功能開啟時動作，而 `goals` 在固定 disable 清單裡；即使開啟，也只更新記憶體中的回合統計（[`goal/extension.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/ext/goal/src/extension.rs#L297-L312)、[`goal/accounting.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/ext/goal/src/accounting.rs#L175-L215)）。
 
-  2026-11-15 的 Sol smoke（[CODEX_SMOKE_TEST.md](v2/CODEX_SMOKE_TEST.md)）派工當下，帳號回傳的 `gpt-6.1-sol` 中繼資料沒有宣告 `send_message_to_user_async`，B1 只擷取到 `functions.exec`、`functions.wait`，所以這個工具沒有在真實派工中驗證到。同一個模型的中繼資料在相隔數十秒的兩次抓取之間曾經不同，因此每次派工都要重新探測。Skill 目前仍建議 Terra。舊版真實派工收據仍可查核。
+  2026-11-15 的 Sol smoke（[CODEX_SMOKE_TEST.md](v2/CODEX_SMOKE_TEST.md)）派工當下，帳號回傳的 `gpt-6.1-sol` 中繼資料沒有宣告 `send_message_to_user_async`，B1 只擷取到 `functions.exec`、`functions.wait`，所以這個工具沒有在真實派工中驗證到。同一個模型的中繼資料在相隔數十秒的兩次抓取之間曾經不同，因此每次派工都要重新探測。2026-11-19 起 Skill 的 GPT 預設建議改為 `gpt-6.2-sol`（見下方探測表說明）。舊版真實派工收據仍可查核。
 - **探測表**（`codex-cli 0.169.0`，2026-11-15，6.2 為 2026-11-19，本機替身，不推論；每次派工前都會重新探測，這張表只是當時的紀錄）。
   所有模型的 `tool_mode` 都是 `code_mode_only`。B2 在每一列都相同：disable 78 項，仍開啟的只有 `secret_auth_storage`、`unified_exec`（`shell_tool` 為 `false`），以及 7 個 `removed` 階段的已說明功能。帳號另有兩個隱藏模型，不列在表中。
 
@@ -158,7 +158,9 @@ Worker 的輸出只留在 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`�
   | `gpt-5.6-terra` | low、high | `functions.exec`、`functions.wait` | 通過 |
   | `gpt-5.6-luna` | low、high | `functions.exec`、`functions.wait` | 通過 |
 
-  6.2 兩個模型於 2026-11-19 以同一流程補測（B2 同樣是 disable 78 項），中繼資料的 `supported_reasoning_levels` 都列出 low～xhigh。帳號沒有 6.2 Terra。6.2 為可指定，Skill 的預設建議仍是 `gpt-6.1-terra`。
+  6.2 兩個模型於 2026-11-19 以同一流程補測（B2 同樣是 disable 78 項），中繼資料的 `supported_reasoning_levels` 都列出 low～xhigh。帳號沒有 6.2 Terra。
+
+  **GPT 預設建議（2026-11-19 起）是 `gpt-6.2-sol`**，`gpt-6.1-terra` 改為可指定（selectable，不是 refused，手打覆寫 `terra` 仍可用）。依據是帳本的真實派工：`gpt-6.2-sol` 2/2 `SUCCEEDED`／`ACCEPTED`（low、medium）；`gpt-6.1-terra` 0/1，medium 的 Context-Bundle Review 在 `turn.started` 之後沒有任何事件，900 秒逾時。同一個 Bundle 隨後改用 `gpt-6.2-sol · medium` 重送，75 秒完成並驗收通過。
 
   在加入 EXPLAINED_TOOLS 之前，`gpt-6.1-sol` 兩種 effort 都以「functions 底下出現未預期的 `send_message_to_user_async`」被拒絕。6.x 的其他模型在中繼資料列的是 `send_user_message_async` 和 `clock`，0.169.0 沒有註冊這兩個工具；日後版本若註冊，B1 會拒絕。
 - **帳本的 `model_observed` 為空是預期行為。** agy 與 codex 的 CLI 不回報實際使用的模型，收據的 `model_observed` 為 `"unknown"`，帳本欄位維持 null；只有 `claude-print` 會有值（取自 `modelUsage`）。

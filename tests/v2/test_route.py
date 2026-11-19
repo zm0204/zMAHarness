@@ -160,9 +160,9 @@ class RouteTests(unittest.TestCase):
              "gemini-4-neon-high · high"),
             ("codex", "research", "standard", "bundle", "gemini-3.8-flash-medium · medium", "agy-print",
              "gemini-4-neon-high · high"),
-            ("claude", "review", "standard", "bundle", "gpt-6.1-terra · medium", "codex-exec",
+            ("claude", "review", "standard", "bundle", "gpt-6.2-sol · medium", "codex-exec",
              "gemini-4-neon-high · high"),
-            ("claude", "second_opinion", "deep", "bundle", "gpt-6.1-terra · high", "codex-exec",
+            ("claude", "second_opinion", "deep", "bundle", "gpt-6.2-sol · high", "codex-exec",
              "gemini-4-neon-high · high"),
             ("claude", "review", "standard", "worktree", "gemini-4-neon-medium · medium", "agy-print",
              "gemini-3.8-flash-low · low"),
@@ -193,9 +193,9 @@ class RouteTests(unittest.TestCase):
                         self.assertNotEqual(res["recommended"]["family"], forbidden)
                         if res["alternate"]:
                             self.assertFalse(res["alternate"]["model"].startswith(forbidden))
-        # controller=other does not exclude GPT -> picks Terra on review standard bundle.
+        # controller=other does not exclude GPT -> picks 6.2 Sol on review standard bundle.
         other = self._run_route(task="review", level="standard", mode="bundle", controller="other")
-        self.assertEqual(other["recommended"]["model"], "gpt-6.1-terra")
+        self.assertEqual(other["recommended"]["model"], "gpt-6.2-sol")
 
     def test_quota_reroute_appendix_c_d7_save_alternates(self):
         until = (self.now + timedelta(hours=59, minutes=5, seconds=41)).isoformat(timespec="seconds")
@@ -215,10 +215,10 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(codex_res["note_data"]["kind"], "rerouted")
         self.assertEqual(codex_res["note_data"]["pool"], "agy:gemini")
 
-        # Claude T2 Review (bundle) + Gemini cooling -> Terra medium + option3 gpt-6-luna low (Appendix C D7!).
+        # Claude T2 Review (bundle) + Gemini cooling -> 6.2 Sol medium + option3 gpt-6-luna low (Appendix C D7!).
         claude_res = self._run_route(task="review", level="standard", mode="bundle", controller="claude",
                                      quota_overrides=cooling)
-        self.assertEqual(claude_res["recommended"]["display"], "gpt-6.1-terra · medium")
+        self.assertEqual(claude_res["recommended"]["display"], "gpt-6.2-sol · medium")
         self.assertIsNotNone(claude_res["alternate"])
         self.assertEqual(claude_res["alternate"]["display"], "gpt-6-luna · low")
         self.assertEqual(claude_res["alternate"]["purpose"], "save")
@@ -387,6 +387,9 @@ picks = [
         self.assertTrue(same_fam["ok"] and same_fam["card"])
         self.assertEqual(same_fam["recommended"]["model"], "gpt-6.1-terra")
         self.assertIn("你指定的 gpt-6.1-terra", same_fam["note"])
+        # Terra is no longer the default but stays selectable, never refused.
+        self.assertEqual(same_fam["recommended"]["status"], "selectable")
+        self.assertIsNone(registry.refused_model_reason("codex-exec", "gpt-6.1-terra"))
 
     def test_only_needed_adapters_and_quota_pools_are_queried(self):
         seen_detect = []

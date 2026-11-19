@@ -103,27 +103,27 @@ routes = [
 
 # ───────────── GPT（codex-exec，只支援 Context-Bundle） ─────────────
 [[models]]
-key = "gpt-6.1-terra"
-display = "GPT 6.1 Terra"
+key = "gpt-6.2-sol"
+display = "GPT 6.2 Sol"
 family = "gpt"
 status = "recommended"
 cost = "premium"
 billing = "subscription"
 efforts = ["low", "medium", "high", "xhigh"]
-aliases = ["terra"]
-routes = [{ adapter = "codex-exec", id = "gpt-6.1-terra", quota = "chatgpt" }]
-note = "GPT 的預設建議；真實 smoke 五項工具探測都被擋下。"
+routes = [{ adapter = "codex-exec", id = "gpt-6.2-sol", quota = "chatgpt" }]
+note = "GPT 的預設建議（2026-11-19 起）。low～xhigh 探測通過；真實派工 2/2 SUCCEEDED／ACCEPTED（low、medium）。"
 
 [[models]]
-key = "gpt-6.2-sol"
-display = "GPT 6.2 Sol"
+key = "gpt-6.1-terra"
+display = "GPT 6.1 Terra"
 family = "gpt"
 status = "selectable"
 cost = "premium"
 billing = "subscription"
 efforts = ["low", "medium", "high", "xhigh"]
-routes = [{ adapter = "codex-exec", id = "gpt-6.2-sol", quota = "chatgpt" }]
-note = "2026-11-19 low～xhigh 探測通過、真實派工 SUCCEEDED／ACCEPTED（low）。"
+aliases = ["terra"]
+routes = [{ adapter = "codex-exec", id = "gpt-6.1-terra", quota = "chatgpt" }]
+note = "2026-11-19 起改為可指定：真實派工 0/1（medium，turn.started 後 900 秒無輸出逾時）。真實 smoke 五項工具探測都被擋下。"
 
 [[models]]
 key = "gpt-6.2-astra"
@@ -220,7 +220,7 @@ level = "light"        # 小型常規檢查
 picks = [
   { model = "gemini-3.8-flash", effort = "low" },
   { model = "claude-sonnet", effort = "low" },       # 額度備援
-  { model = "gpt-6.1-terra", effort = "low" },       # 額度備援（Codex 主控會被排除）
+  { model = "gpt-6.2-sol", effort = "low" },         # 額度備援（Codex 主控會被排除）
 ]
 
 [[cells]]
@@ -228,7 +228,7 @@ task = "review"
 level = "standard"     # T2 核心邏輯／跨模組高風險 Review
 picks = [
   # 只有非 GPT 主控（例如 Claude Code）且 Context-Bundle 時會選到；選項 3 照原 SKILL 用 Neon High。
-  { model = "gpt-6.1-terra", effort = "medium", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
+  { model = "gpt-6.2-sol", effort = "medium", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
   { model = "gemini-4-neon", effort = "medium" },
   { model = "claude-sonnet", effort = "medium" },    # 額度備援
 ]
@@ -237,7 +237,7 @@ picks = [
 task = "review"
 level = "deep"         # T2 跨模組交互複雜
 picks = [
-  { model = "gpt-6.1-terra", effort = "medium", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
+  { model = "gpt-6.2-sol", effort = "medium", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
   { model = "gemini-4-neon", effort = "high" },
   { model = "claude-opus", effort = "high" },        # 額度備援
 ]
@@ -246,7 +246,7 @@ picks = [
 task = "second_opinion"
 level = "deep"         # T1 連續修復失敗；異質視角深度推理
 picks = [
-  { model = "gpt-6.1-terra", effort = "high", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
+  { model = "gpt-6.2-sol", effort = "high", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
   { model = "gemini-4-neon", effort = "high" },
   { model = "claude-opus", effort = "high" },
   { model = "claude-sonnet", effort = "high" },
@@ -258,7 +258,7 @@ level = "light"        # T3 大量資料整理
 picks = [
   { model = "gemini-3.8-flash", effort = "low" },
   { model = "claude-sonnet", effort = "low" },       # 額度備援
-  { model = "gpt-6.1-terra", effort = "low" },       # 額度備援
+  { model = "gpt-6.2-sol", effort = "low" },         # 額度備援
 ]
 
 [[cells]]
@@ -267,7 +267,7 @@ level = "standard"     # 需要整合較多線索
 picks = [
   { model = "gemini-3.8-flash", effort = "medium" },
   { model = "claude-sonnet", effort = "medium" },    # 額度備援
-  { model = "gpt-6.1-terra", effort = "medium" },    # 額度備援
+  { model = "gpt-6.2-sol", effort = "medium" },      # 額度備援
 ]
 
 # ───────────── 選項 3 ─────────────
