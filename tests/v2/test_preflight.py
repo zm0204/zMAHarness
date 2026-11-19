@@ -14,9 +14,9 @@ from unittest.mock import patch
 from mah import cli
 from mah.config import ConfigError, default_config_path, path_report, sandbox_redirect_detected, \
     user_local_appdata, zmaharness_home
-from mah.ledger import GrantLedger
-from mah.preflight import GIT_NOT_INSTALLED, NOT_A_GIT_REPOSITORY, UNSANDBOXED_DISPATCH_REQUIRED, git_toplevel, \
-    preflight, require_unsandboxed_dispatch
+from mah.ledger import GrantLedger, LedgerError
+from mah.preflight import GIT_NOT_INSTALLED, INVALID_MODEL_ID, NOT_A_GIT_REPOSITORY, UNSANDBOXED_DISPATCH_REQUIRED, \
+    git_toplevel, preflight, require_unsandboxed_dispatch
 
 REPO = Path(__file__).resolve().parents[2]
 SANDBOX_LOCAL = r"C:\Users\user\AppData\Local\Packages\openai.codex_2p2nqsd0c76g0\AC\#!sandbox.{0F1E2D3C}"
@@ -193,6 +193,32 @@ class PreflightTests(unittest.TestCase):
             with self.subTest(model=model):
                 code, report = self.assert_read_only(self.repo, "--adapter", "agy-print", "--model", model)
                 self.assertEqual((code, report["ok"], report["reasons"]), (0, True, []))
+
+    def test_malformed_model_id_is_not_ok_just_as_card_create_rejects_it(self):
+        self.write_config()
+        state = TemporaryDirectory(prefix="mah-preflight-ledger-")
+        self.addCleanup(state.cleanup)
+        ledger = GrantLedger(Path(state.name) / "ledger.sqlite3")
+        for index, model in enumerate((" gemini-pro-orchestrator-neon", "gemini-4-neon-high ", "", "-gemini-4-neon",
+                                       "gemini 4 neon", "gemini-{model}", "g" * 129)):
+            with self.subTest(model=model):
+                # --model=<value> so argparse keeps a value that starts with "-" or is empty.
+                code, report = self.assert_read_only(self.repo, "--adapter", "agy-print", f"--model={model}")
+                self.assertEqual((code, report["ok"]), (30, False))
+                self.assertIn(INVALID_MODEL_ID.format(model=model), report["reasons"])
+                self.assertFalse(any("Orchestrator" in reason for reason in report["reasons"]))
+                with self.assertRaises(LedgerError) as failure:
+                    ledger.create_card(
+                        f"card-bad-{index}", repo_root=str(self.repo), task_key=f"bad-{index}", trigger_ids=["T5"],
+                        prepare_mode="card", allowed_templates=["review"], max_dispatches=1, ttl_minutes=10,
+                        allowed_targets=[{"adapter": "legacy-fixture", "model": model, "effort_max": "low"}])
+                self.assertEqual(failure.exception.code, 2)
+
+    def test_longest_well_formed_model_id_passes_the_format_check(self):
+        self.write_config()
+        model = "g" * 128
+        _, report = self.assert_read_only(self.repo, "--adapter", "agy-print", "--model", model)
+        self.assertNotIn(INVALID_MODEL_ID.format(model=model), report["reasons"])
 
     def test_unknown_adapter_is_an_argparse_error(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit_error:

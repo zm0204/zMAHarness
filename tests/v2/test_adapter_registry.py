@@ -387,5 +387,65 @@ class RefundCaptureKeyTests(unittest.TestCase):
                 self.assert_refused("test-norefund", {key: "a" * 64})
 
 
+class RefusedModelRegistrationTests(unittest.TestCase):
+    """register() checks the (prefixes, reason) shape; a reason fills only {adapter} and {model}."""
+
+    NAME = "test-refusal"
+
+    def setUp(self):
+        self.addCleanup(registry.unregister, self.NAME)
+
+    def assert_not_registered(self):
+        self.assertFalse(registry.is_registered(self.NAME))
+        self.assertNotIn(self.NAME, registry.REFUSED_MODELS)
+
+    def test_malformed_refused_models_are_refused_and_register_nothing(self):
+        for value, error in (
+                (("gemini-pro-orchestrator-", "single string as prefixes"), TypeError),
+                ((b"gemini-pro-orchestrator-", None), TypeError),
+                ((["gemini-pro-orchestrator-"], None), TypeError),
+                (((), None), TypeError),
+                ((("gemini-pro-orchestrator-", 7), None), TypeError),
+                ((("gemini-pro-orchestrator-",), 7), TypeError),
+                ((("gemini-pro-orchestrator-",), None, "extra"), TypeError),
+                ([("gemini-pro-orchestrator-",), None], TypeError),
+                ("gemini-pro-orchestrator-", TypeError),
+                ((("",), None), ValueError),
+                ((("gemini-pro-orchestrator-", ""), None), ValueError),
+                ((("   ",), None), ValueError),
+        ):
+            with self.subTest(value=value), self.assertRaises(error):
+                registry.register(self.NAME, AdapterPolicy(), factory=lambda manager, config: None,
+                                  refused_models=value)
+            self.assert_not_registered()
+            self.assertFalse(registry.has_factory(self.NAME))
+        self.assertIsNone(registry.refused_model_reason(self.NAME, "gemini-4-argon-high"))
+
+    def test_well_formed_refused_models_block_only_their_prefixes(self):
+        registry.register(self.NAME, AdapterPolicy(), refused_models=(("bad-", "Worse-"), None))
+        self.assertEqual(registry.refused_model_reason(self.NAME, "bad-1"), f"{self.NAME} 不接受模型 bad-1")
+        self.assertEqual(registry.refused_model_reason(self.NAME, "WORSE-2"), f"{self.NAME} 不接受模型 WORSE-2")
+        for model in ("gemini-4-argon-high", "good-bad-1", "claude-sonnet-5-5-high"):
+            with self.subTest(model=model):
+                self.assertIsNone(registry.refused_model_reason(self.NAME, model))
+
+    def test_reason_keeps_other_braces_and_never_raises(self):
+        reason = 'json {"k": 1} {} {0} {other} {{model}} { unbalanced } and { — {adapter} refuses {model}'
+        registry.register(self.NAME, AdapterPolicy(), refused_models=(("bad-",), reason))
+        self.assertEqual(
+            registry.refused_model_reason(self.NAME, "bad-1"),
+            'json {"k": 1} {} {0} {other} {bad-1} { unbalanced } and { — test-refusal refuses bad-1')
+
+    def test_substituted_values_are_not_expanded_again(self):
+        registry.register(self.NAME, AdapterPolicy(), refused_models=(("bad-",), "{model} / {adapter}"))
+        self.assertEqual(registry.refused_model_reason(self.NAME, "bad-{adapter}{0}"),
+                         f"bad-{{adapter}}{{0}} / {self.NAME}")
+
+    def test_built_in_orchestrator_reason_is_unchanged(self):
+        model = "gemini-pro-orchestrator-neon"
+        self.assertEqual(registry.refused_model_reason("agy-print", model),
+                         registry.AGY_ORCHESTRATOR_REASON.replace("{model}", model))
+
+
 if __name__ == "__main__":
     unittest.main()

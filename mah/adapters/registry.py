@@ -4,6 +4,8 @@ The registry only answers queries; callers keep their own errors and exit codes.
 Adapter modules are imported lazily so that importing the registry never loads a
 worker implementation or creates an import cycle.
 """
+import re
+
 from .base import AdapterPolicy
 
 DEFAULT_POLICY = AdapterPolicy()
@@ -102,6 +104,9 @@ DEFAULT_CAPTURE_REASON = "capture_integrity"
 # (model ID prefixes compared case-insensitively, reason with {adapter} and {model}); optional model refusal
 # applied by card creation, preflight --model and the Adapter's own prepare_invocation.
 REFUSED_MODELS = {"agy-print": ((AGY_ORCHESTRATOR_PREFIX,), AGY_ORCHESTRATOR_REASON)}
+DEFAULT_REFUSED_REASON = "{adapter} 不接受模型 {model}"
+# Only these two placeholders are filled; any other brace in a reason is kept as written.
+REASON_PLACEHOLDER = re.compile(r"\{(adapter|model)\}")
 # lookup(config) -> resolved path or None; optional read-only Worker executable check for preflight.
 EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable, "claude-print": _claude_print_executable,
                       "codex-exec": _codex_exec_executable}
@@ -114,6 +119,25 @@ EXECUTABLE_MISSING_REASONS = {
 }
 
 
+def _check_refused_models(value):
+    """A (prefixes, reason) pair: prefixes a nonempty tuple of nonempty strings, reason a string or None.
+
+    A bare string as prefixes would be matched one character at a time and an empty prefix matches every
+    model, so both are refused here instead of silently blocking ordinary models later.
+    """
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise TypeError("refused_models must be a (prefixes, reason) tuple")
+    prefixes, reason = value
+    if not isinstance(prefixes, tuple) or not prefixes:
+        raise TypeError("refused_models prefixes must be a nonempty tuple of strings, not a single string")
+    if any(not isinstance(prefix, str) for prefix in prefixes):
+        raise TypeError("refused_models prefixes must all be strings")
+    if any(not prefix.strip() for prefix in prefixes):
+        raise ValueError("refused_models prefixes must not be empty strings")
+    if reason is not None and not isinstance(reason, str):
+        raise TypeError("refused_models reason must be a string or None")
+
+
 def register(name, policy, *, factory=None, capture_check=None, capture_reason=None, executable_lookup=None,
              executable_missing_reason=None, refused_models=None):
     """Register an Adapter without editing core modules. Names must be new."""
@@ -121,6 +145,9 @@ def register(name, policy, *, factory=None, capture_check=None, capture_reason=N
         raise ValueError(f"Adapter is already registered: {name}")
     if not isinstance(policy, AdapterPolicy):
         raise TypeError("policy must be an AdapterPolicy")
+    # Checked before any table changes, so a malformed entry leaves nothing half-registered.
+    if refused_models is not None:
+        _check_refused_models(refused_models)
     ADAPTER_POLICIES[name] = policy
     if factory is not None:
         ADAPTER_FACTORIES[name] = factory
@@ -155,7 +182,9 @@ def refused_model_reason(name, model):
     """The user-facing reason when the Adapter refuses this model ID, otherwise None."""
     prefixes, reason = REFUSED_MODELS.get(name, ((), None))
     if isinstance(model, str) and any(model.lower().startswith(prefix.lower()) for prefix in prefixes):
-        return (reason or "{adapter} 不接受模型 {model}").format(adapter=name, model=model)
+        # One pass: braces in the reason or in a substituted value are never parsed, so this cannot raise.
+        values = {"adapter": str(name), "model": model}
+        return REASON_PLACEHOLDER.sub(lambda match: values[match.group(1)], reason or DEFAULT_REFUSED_REASON)
     return None
 
 

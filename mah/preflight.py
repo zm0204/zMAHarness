@@ -8,8 +8,11 @@ from .adapters.registry import executable_lookup, executable_missing_reason, ref
 from .config import HOME_VARIABLE, ConfigError, adapter_enabled, default_config_path, load_config, \
     sandbox_redirect_detected
 from .executable_path import EXECUTABLE_INSIDE_PROJECT, inside_roots
-from .ledger import LedgerError
+from .ledger import TARGET_ID, LedgerError, valid_id
 from .login_status import login_reasons
+
+INVALID_MODEL_ID = ("模型 ID {model!r} 格式不符：須以英文字母或數字開頭，只能包含英文字母、數字與 _ . : / -，"
+                    "長度 1～128 字元。card create 會以結束碼 2 拒絕這個 ID。")
 
 UNSANDBOXED_DISPATCH_REQUIRED = (
     "派工必須在沙盒外執行：目前環境無法寫入 zMAHarness 狀態目錄或啟動 Worker。"
@@ -59,12 +62,16 @@ def preflight(repo, adapter, config_path=None, model=None):
     For claude-print and codex-exec it runs the CLI's own login status command (no inference request);
     that CLI may refresh files in its own home folder. For codex-exec it also reads the ChatGPT quota
     (read-only, no inference) and blocks only when the quota is confirmed exhausted.
-    With a model ID it also reports a model the Adapter refuses, so the card is never proposed.
+    With a model ID it also reports an ID card creation would reject (malformed or refused by the Adapter),
+    so the card is never proposed.
     """
     reasons = []
-    refused = refused_model_reason(adapter, model) if model is not None else None
-    if refused is not None:
-        reasons.append(refused)
+    if model is not None:
+        # The same full match card creation applies, so a padded or malformed ID is never reported ok.
+        if not valid_id(TARGET_ID, model):
+            reasons.append(INVALID_MODEL_ID.format(model=model))
+        elif (refused := refused_model_reason(adapter, model)) is not None:
+            reasons.append(refused)
     repo_root, git_reason = git_toplevel(repo)
     if git_reason is not None:
         reasons.append(git_reason)

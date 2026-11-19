@@ -48,8 +48,11 @@
 - `CAPTURE_CHECKS[name]` 與 `CAPTURE_REASONS[name]`（選用）：收據完整性檢查與失敗時的原因字串，見下一節。
 - `EXECUTABLE_LOOKUPS[name]`（選用）：`lookup(config) -> 路徑或 None`，供 `mah preflight` 唯讀確認 Worker 執行檔，不得執行它。
   `EXECUTABLE_MISSING_REASONS[name]`（選用）提供找不到時給使用者看的一句話。
-- `REFUSED_MODELS[name]`（選用）：`(模型 ID 前綴, 原因)`，前綴不分大小寫，原因可用 `{adapter}`、`{model}`。卡片建立以結束碼 2 拒絕，
-  `mah preflight --model` 把原因列入 `reasons`；Adapter 的 `prepare_invocation` 應呼叫 `refused_model_reason` 並同樣以結束碼 2 拒絕，
+- `REFUSED_MODELS[name]`（選用）：`(模型 ID 前綴, 原因)`，前綴不分大小寫，原因可用 `{adapter}`、`{model}`。
+  `register(refused_models=...)` 會檢查格式：前綴必須是由非空字串組成的非空 tuple（不能是單一字串，也不能有空字串），
+  原因是字串或 `None`；不合格式時丟出 `TypeError`／`ValueError`，而且不寫入任何註冊表。原因只替換 `{adapter}`、`{model}`，
+  其他大括號原樣保留，不會拋出例外。卡片建立以結束碼 2 拒絕，
+  `mah preflight --model` 把原因列入 `reasons`（模型 ID 不符合卡片建立的格式時，也會回報不 ok）；Adapter 的 `prepare_invocation` 應呼叫 `refused_model_reason` 並同樣以結束碼 2 拒絕，
   讓舊卡也在探測與預留 Grant 之前被擋下。目前 `agy-print` 拒絕 `gemini-pro-orchestrator-`：Orchestrator 會自行派出子代理，
   `--settings` 的 deny 規則能否約束子代理尚未驗證。
 
