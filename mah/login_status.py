@@ -48,7 +48,8 @@ def claude_login_reasons(executable, *, now=None):
     method = data.get("authMethod")
     key_source = data.get("apiKeySource")
     if method != "claude.ai" or data.get("apiProvider") != "firstParty" or key_source not in (None, "none"):
-        shown = method if method in CLAUDE_AUTH_METHODS else "unknown"
+        # A non-string authMethod (list, object) must not reach the set lookup, which would raise.
+        shown = method if isinstance(method, str) and method in CLAUDE_AUTH_METHODS else "unknown"
         return [f"Claude CLI 目前的登入方式是 {shown}，不是 Claude 訂閱帳號；zMAHarness 不使用 API 金鑰或第三方供應商。"
                 "請執行 claude auth login 改以 Claude 帳號登入。"]
     if report.returncode != 0:
@@ -110,14 +111,18 @@ def _quota_reply(executable, environment, timeout, *, cwd=None):
                                    stderr=subprocess.DEVNULL, shell=False, env=environment, cwd=cwd)
     except (OSError, ValueError):
         return None
-    job, _ = process_tree.contain(process)
+    job = None
+    started = False
     replies = []
     finished = threading.Event()
 
     def read():
         try:
             for raw in process.stdout:
-                message = json.loads(raw)
+                try:
+                    message = json.loads(raw)
+                except ValueError:
+                    continue  # A blank or non-JSON line must not hide a later reply.
                 if isinstance(message, dict) and message.get("id") == 2:
                     replies.append(message)
                     break
@@ -131,17 +136,27 @@ def _quota_reply(executable, environment, timeout, *, cwd=None):
             finished.set()
 
     reader = threading.Thread(target=read, daemon=True)
-    reader.start()
+    # Cleanup is owed from the moment the process exists, even if containment or the reader fails.
     try:
+        job, _ = process_tree.contain(process)
+        reader.start()
+        started = True
         for message in QUOTA_MESSAGES:
             process.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
         process.stdin.flush()
         finished.wait(timeout)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         pass
     finally:
         process_tree.terminate_tree(process, job)
-        reader.join(timeout=0.3)
+        if started:
+            reader.join(timeout=0.3)
+        else:
+            # No reader owns stdout, so the main thread may close it without racing a blocked read().
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
         try:
             process.stdin.close()
         except OSError:
@@ -152,15 +167,19 @@ def _quota_reply(executable, environment, timeout, *, cwd=None):
 def _reset_time(result):
     """Latest reset among exhausted windows, else the upsell reset time; None when unknown."""
     times = []
-    for limits in (result.get("rateLimits"), *(result.get("rateLimitsByLimitId") or {}).values()):
+    by_limit = result.get("rateLimitsByLimitId")
+    # Only a JSON object has .values(); any other shape contributes nothing instead of raising.
+    groups = (result.get("rateLimits"), *(by_limit.values() if isinstance(by_limit, dict) else ()))
+    for limits in groups:
         if not isinstance(limits, dict):
             continue
         for window in (limits.get("primary"), limits.get("secondary")):
-            if (isinstance(window, dict) and isinstance(window.get("resetsAt"), int)
-                    and isinstance(window.get("usedPercent"), (int, float)) and window["usedPercent"] >= 100):
+            # type() rather than isinstance(): a JSON true/false is not an epoch.
+            if (isinstance(window, dict) and type(window.get("resetsAt")) is int
+                    and type(window.get("usedPercent")) in (int, float) and window["usedPercent"] >= 100):
                 times.append(window["resetsAt"])
     upsell = result.get("rateLimitUpsell")
-    if not times and isinstance(upsell, dict) and isinstance(upsell.get("reset_at"), int):
+    if not times and isinstance(upsell, dict) and type(upsell.get("reset_at")) is int:
         times.append(upsell["reset_at"])
     return max(times) if times else None
 

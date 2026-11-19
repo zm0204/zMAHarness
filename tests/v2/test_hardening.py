@@ -18,7 +18,7 @@ from uuid import uuid4
 from mah import login_status
 from mah.adapters.agy_print import AgyPrintAdapter
 from mah.adapters.claude_print import resolve_claude_executable
-from mah.adapters.codex_exec import resolve_codex_executable
+from mah.adapters.codex_exec import codex_environment, resolve_codex_executable
 from mah.context_bundle import prepare_bundle, prepare_worktree
 from mah.executable_path import EXECUTABLE_INSIDE_PROJECT, which
 from mah.ledger import DELEGATE_DEFERRED, GrantLedger, LedgerError
@@ -651,6 +651,13 @@ class LoginStatusTests(Scratch):
         with patch("mah.login_status._status", return_value=completed(0, b"not json")):
             self.assertIn("無法確認", login_status.claude_login_reasons(Path("claude.exe"))[0])
 
+    def test_non_string_auth_method_is_reported_as_unknown(self):
+        for method in (["claude.ai"], {"name": "claude.ai"}, 1, None):
+            with self.subTest(method=method):
+                reasons, _ = self.claude(self.SUBSCRIPTION | {"authMethod": method})
+                self.assertEqual(len(reasons), 1)
+                self.assertIn("登入方式是 unknown", reasons[0])
+
     def test_preflight_rejects_codex_api_key_or_logged_out(self):
         api_key = completed(0, stderr=b"WARNING: x\nLogged in using an API key - sk-fake-***00000\n")
         with patch("mah.login_status._status", return_value=api_key):
@@ -703,8 +710,11 @@ for raw in sys.stdin:
         print(json.dumps({"id": 1, "result": {}}), flush=True)
     if message.get("id") == 2:
         print(json.dumps({"method": "account/rateLimits/updated", "params": {}}), flush=True)
+        if mode == "noisy":
+            print("", flush=True)
+            print(sys.argv[3], flush=True)
         print(sys.argv[3] if mode == "garbled" else json.dumps({"id": 2, "result": {
-            "ordinaryUsageAllowed": mode == "available"}}), flush=True)
+            "ordinaryUsageAllowed": mode in ("available", "noisy")}}), flush=True)
 """
 
 
@@ -730,8 +740,50 @@ class CodexQuotaTests(Scratch):
                 self.assertEqual(json.loads(log.read_text())["methods"],
                                  ["initialize", "initialized", "account/rateLimits/read"])
 
+    def test_non_json_lines_before_the_reply_are_skipped(self):
+        log, launched = self.stand_in("noisy")
+        with launched:
+            self.assertEqual(login_status.codex_quota_status(Path("codex.exe"), timeout=10), ("available", None))
+        self.assertEqual(json.loads(log.read_text())["methods"], ["initialize", "initialized", "account/rateLimits/read"])
+
+    def test_reader_start_failure_still_cleans_up_and_returns_none(self):
+        _, launched = self.stand_in("available")
+        processes = []
+        with launched as popen:
+            real = popen.side_effect
+
+            def keep(argv, **kwargs):
+                processes.append(real(argv, **kwargs))
+                return processes[-1]
+
+            popen.side_effect = keep
+            with patch.object(login_status.process_tree, "terminate_tree",
+                              wraps=login_status.process_tree.terminate_tree) as terminate, \
+                    patch("threading.Thread.start", side_effect=RuntimeError("can't start new thread")):
+                self.assertIsNone(login_status._quota_reply(Path("codex.exe"), codex_environment(), 10))
+        terminate.assert_called_once()
+        process, = processes
+        self.assertIsNotNone(process.poll())
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stdin.closed)
+
+    def test_reset_time_ignores_malformed_limit_groups(self):
+        exhausted = {"usedPercent": 100, "resetsAt": 1794684431}
+        for by_limit in (["codex"], "codex", 7, True, [{"primary": exhausted}]):
+            result = {"ordinaryUsageAllowed": False, "rateLimits": {"primary": exhausted},
+                      "rateLimitsByLimitId": by_limit}
+            with self.subTest(by_limit=by_limit):
+                self.assertEqual(login_status._reset_time(result), 1794684431)
+                with patch("mah.login_status._quota_reply", return_value={"id": 2, "result": result}):
+                    self.assertEqual(login_status.codex_quota_status(Path("codex.exe")), ("exhausted", 1794684431))
+        booleans = {"rateLimits": {"primary": {"usedPercent": 100, "resetsAt": True}},
+                    "rateLimitUpsell": {"reset_at": False}}
+        self.assertIsNone(login_status._reset_time(booleans))
+        self.assertEqual(login_status._reset_time({"rateLimitsByLimitId": {"codex": {"primary": exhausted}}}),
+                         1794684431)
+
     def test_failed_or_unclear_quota_query_never_blocks(self):
-        for mode, timeout in (("silent", 1), ("garbled", 10)):
+        for mode, timeout in (("silent", 1), ("garbled", 1)):
             _, launched = self.stand_in(mode)
             with self.subTest(mode=mode), launched:
                 state, _ = login_status.codex_quota_status(Path("codex.exe"), timeout=timeout)
