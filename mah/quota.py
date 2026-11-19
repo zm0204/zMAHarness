@@ -1,5 +1,4 @@
 """Quota status queries (ChatGPT app-server, Claude /usage, passive agy 429) and cache rules (spec 3d)."""
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,18 +9,21 @@ import re
 import sqlite3
 import subprocess
 
-from . import login_status
+from . import login_status, process_tree
 from .adapters import registry
 from .catalog import load_catalog, local_catalog_path
 from .config import adapter_enabled
 from .db import connect_read_only
 from .executable_path import inside_roots
 from .model_detect import (
+    OVERALL_TIMEOUT_SECONDS,
+    PARTIAL_TIMEOUT_WARNING,
     cache_path,
     detect_adapters,
     executable_key,
     query_cwd,
     read_routing_cache,
+    update_routing_cache,
     write_routing_cache,
 )
 
@@ -373,25 +375,15 @@ def query_claude_quota(executable, *, cwd=None, timeout=QUOTA_TIMEOUT_SECONDS, n
 
     argv = [str(executable), *CLAUDE_USAGE_ARGS]
     try:
-        process = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            shell=False, env=claude_environment(), cwd=cwd,
+        completed = process_tree.run_contained(
+            argv, env=claude_environment(), cwd=cwd, timeout=timeout, popen=subprocess.Popen,
         )
+    except subprocess.TimeoutExpired:
+        return QuotaState(pool="claude", state="unknown", source="none", detail="timeout"), None, None, clear_breaker
     except (OSError, ValueError) as exc:
         return QuotaState(pool="claude", state="unknown", source="none", detail=str(exc)), None, None, clear_breaker
 
-    try:
-        stdout, _stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-            process.wait(5)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        return QuotaState(pool="claude", state="unknown", source="none", detail="timeout"), None, None, clear_breaker
-    except OSError as exc:
-        return QuotaState(pool="claude", state="unknown", source="none", detail=str(exc)), None, None, clear_breaker
-
+    stdout = completed.stdout or b""
     try:
         data = json.loads(stdout.decode("utf-8-sig"))
     except (UnicodeError, ValueError):
@@ -408,9 +400,9 @@ def query_claude_quota(executable, *, cwd=None, timeout=QUOTA_TIMEOUT_SECONDS, n
             False,
         )
 
-    if process.returncode != 0:
+    if completed.returncode != 0:
         return QuotaState(pool="claude", state="unknown", source="none",
-                          detail=f"exit_{process.returncode}"), None, None, clear_breaker
+                          detail=f"exit_{completed.returncode}"), None, None, clear_breaker
 
     state, windows, until = parse_claude_usage_text(data.get("result"), now=moment, tight_percent=tight_percent)
     if state == "unknown":
@@ -627,7 +619,21 @@ def _resolve_adapter_executable(config, adapter, exclude_roots):
     return executable
 
 
-def get_quota_states(config, catalog=None, pools=None, *, refresh=False, now=None, exclude_roots=()):
+def cached_quota_fallback(config, catalog, pool_name, *, now=None):
+    """Return usable cached snapshot (fresh or D13 stale tight/exhausted) or unknown when a query times out."""
+    moment = now or datetime.now(UTC)
+    routing = catalog.routing if catalog is not None else None
+    tight_percent = routing.tight_percent if routing is not None else 90
+    ttl_minutes = routing.quota_ttl_minutes if routing is not None else 10
+    quota_cache = read_routing_cache(cache_path(config)).get("quota", {})
+    cached_state, _ = _decode_cached_quota(
+        pool_name, quota_cache.get(pool_name), now=moment, ttl_minutes=ttl_minutes, tight_percent=tight_percent,
+    )
+    return cached_state or QuotaState(pool=pool_name, state="unknown", source="none", detail="timeout")
+
+
+def get_quota_states(config, catalog=None, pools=None, *, refresh=False, now=None, exclude_roots=(),
+                     overall_timeout=OVERALL_TIMEOUT_SECONDS):
     """Query or derive quota states for requested pools (or all known pools when pools is None).
 
     Returns (dict[pool -> QuotaState], list[str] warnings). Never raises.
@@ -709,22 +715,29 @@ def get_quota_states(config, catalog=None, pools=None, *, refresh=False, now=Non
     need_claude = "claude" in target_pools
     need_agy = any(p.startswith("agy:") for p in target_pools) or pools is None
 
-    futures = {}
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        if need_chatgpt:
-            futures["chatgpt"] = pool.submit(fetch_chatgpt)
-        if need_claude:
-            futures["claude"] = pool.submit(fetch_claude)
-        if need_agy:
-            futures["agy"] = pool.submit(derive_agy_cooldowns, config, catalog, now=moment)
+    tasks = {}
+    if need_chatgpt:
+        tasks["chatgpt"] = fetch_chatgpt
+    if need_claude:
+        tasks["claude"] = fetch_claude
+    if need_agy:
+        tasks["agy"] = lambda: derive_agy_cooldowns(config, catalog, now=moment)
 
-        if "chatgpt" in futures:
-            state, update = futures["chatgpt"].result()
+    done, _errors, timed_out = process_tree.run_parallel_with_deadline(tasks, timeout=overall_timeout)
+    if timed_out:
+        warnings.append(PARTIAL_TIMEOUT_WARNING)
+
+    if need_chatgpt:
+        if "chatgpt" in done:
+            state, update = done["chatgpt"]
             states["chatgpt"] = state
             if update is not None:
                 cache_quota_updates["chatgpt"] = update
-        if "claude" in futures:
-            state, update, tripped, warning, cleared = futures["claude"].result()
+        else:
+            states["chatgpt"] = cached_quota_fallback(config, catalog, "chatgpt", now=moment)
+    if need_claude:
+        if "claude" in done:
+            state, update, tripped, warning, cleared = done["claude"]
             states["claude"] = state
             if update is not None:
                 cache_quota_updates["claude"] = update
@@ -734,24 +747,26 @@ def get_quota_states(config, catalog=None, pools=None, *, refresh=False, now=Non
                 warnings.append(warning)
             if cleared:
                 clear_claude_breaker = True
-        if "agy" in futures:
-            agy_cooldowns = futures["agy"].result()
-            for p, state in agy_cooldowns.items():
-                if pools is None or p in target_pools:
-                    states[p] = state
+        else:
+            states["claude"] = cached_quota_fallback(config, catalog, "claude", now=moment)
+    if need_agy and "agy" in done:
+        for p, state in done["agy"].items():
+            if pools is None or p in target_pools:
+                states[p] = state
 
     for pool_name in target_pools:
         if pool_name not in states:
             states[pool_name] = QuotaState(pool=pool_name, state="unknown", source="none")
 
     if cache_quota_updates or breaker_update is not None or clear_claude_breaker:
-        latest = read_routing_cache(cpath)
-        latest.setdefault("quota", {}).update(cache_quota_updates)
-        if breaker_update is not None:
-            latest.setdefault("breakers", {})["claude_usage"] = breaker_update
-        elif clear_claude_breaker:
-            latest.setdefault("breakers", {})["claude_usage"] = None
-        write_routing_cache(cpath, latest)
+        def _mutate(latest):
+            latest.setdefault("quota", {}).update(cache_quota_updates)
+            if breaker_update is not None:
+                latest.setdefault("breakers", {})["claude_usage"] = breaker_update
+            elif clear_claude_breaker:
+                latest.setdefault("breakers", {})["claude_usage"] = None
+
+        update_routing_cache(cpath, _mutate)
 
     return states, warnings
 
@@ -770,16 +785,15 @@ def refresh_routing_cache_best_effort(config, *, now=None):
             quota_pools.append("claude")
         if not detect_targets and not quota_pools:
             return
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            f_detect = pool.submit(
-                detect_adapters, config, detect_targets, ttl_hours=ttl_hours, refresh=False, now=moment,
-            ) if detect_targets else None
-            f_quota = pool.submit(
-                get_quota_states, config, catalog, quota_pools, refresh=True, now=moment,
-            ) if quota_pools else None
-            if f_detect is not None:
-                f_detect.result()
-            if f_quota is not None:
-                f_quota.result()
+        tasks = {}
+        if detect_targets:
+            tasks["detect"] = lambda: detect_adapters(
+                config, detect_targets, ttl_hours=ttl_hours, refresh=False, now=moment, overall_timeout=15,
+            )
+        if quota_pools:
+            tasks["quota"] = lambda: get_quota_states(
+                config, catalog, quota_pools, refresh=True, now=moment, overall_timeout=15,
+            )
+        process_tree.run_parallel_with_deadline(tasks, timeout=15)
     except Exception:
         pass

@@ -11,10 +11,13 @@ that needs CREATE_SUSPENDED and a hand-written CreateProcessW, which the spec de
 """
 import os
 import subprocess
+import threading
+import time
 
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 TERMINATED_EXIT_CODE = 1
+_REAL_POPEN = subprocess.Popen
 
 
 def _supported():
@@ -121,7 +124,7 @@ class Job:
 
 def _process_handle(process):
     """The Win32 handle of a real subprocess.Popen; stand-ins without one are not contained."""
-    if not isinstance(process, subprocess.Popen):
+    if not isinstance(process, _REAL_POPEN):
         return None
     handle = getattr(process, "_handle", None)
     if not isinstance(handle, int) or isinstance(handle, bool) or handle <= 0:
@@ -155,3 +158,137 @@ def contain(process):
         # A Worker that already exited has no tree left to contain.
         return (None, None) if process.poll() is not None else (None, error)
     return job, None
+
+
+def _kill_quietly(process):
+    try:
+        process.kill()
+    except OSError:
+        pass
+
+
+def _close_quietly(stream):
+    if stream is not None:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
+def terminate_tree(process, job):
+    """Terminate the contained Job Object tree, falling back to killing the direct child."""
+    terminated = False
+    if job is not None:
+        terminated = job.terminate()
+    if not terminated:
+        _kill_quietly(process)
+    try:
+        process.wait(timeout=1)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    if job is not None:
+        job.close()
+
+
+def run_contained(argv, *, env=None, cwd=None, timeout=10, popen=None):
+    """Run a read-only CLI query inside a Job Object without hanging on grandchild-held pipes.
+
+    Raises subprocess.TimeoutExpired if the child or any grandchild holding stdout/stderr does not
+    finish within `timeout`. Never closes a pipe from the main thread while its daemon reader thread
+    is still blocked in read().
+    """
+    cmd = [str(part) for part in argv]
+    launcher = popen or subprocess.Popen
+    process = launcher(
+        cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        shell=False, env=env, cwd=cwd,
+    )
+    if not isinstance(process, _REAL_POPEN):
+        # Support unit-test MagicMock stand-ins that implement communicate(timeout=...).
+        try:
+            out, err = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_quietly(process)
+            raise
+        return subprocess.CompletedProcess(cmd, process.returncode, out, err)
+
+    job, _ = contain(process)
+    out_chunks = []
+    err_chunks = []
+
+    def _drain(stream, bucket):
+        if stream is None:
+            return
+        try:
+            data = stream.read()
+            if data:
+                bucket.append(data)
+        except (OSError, ValueError):
+            pass
+        finally:
+            # Close inside the reader thread once read() finishes, never from the main thread.
+            _close_quietly(stream)
+
+    t_out = threading.Thread(target=_drain, args=(process.stdout, out_chunks), daemon=True)
+    t_err = threading.Thread(target=_drain, args=(process.stderr, err_chunks), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    try:
+        remaining = max(0.0, deadline - time.monotonic())
+        process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+
+    if not timed_out:
+        for thread in (t_out, t_err):
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+        if t_out.is_alive() or t_err.is_alive():
+            timed_out = True
+
+    if timed_out:
+        terminate_tree(process, job)
+        # Brief grace so reader threads see EOF once the Job Object ends the tree.
+        t_out.join(timeout=0.3)
+        t_err.join(timeout=0.3)
+        raise subprocess.TimeoutExpired(cmd, timeout, output=b"".join(out_chunks), stderr=b"".join(err_chunks))
+
+    if job is not None:
+        job.close()
+    return subprocess.CompletedProcess(cmd, process.returncode, b"".join(out_chunks), b"".join(err_chunks))
+
+
+def run_parallel_with_deadline(tasks, *, timeout):
+    """Run `{key: callable}` on daemon threads with a shared wall-clock deadline.
+
+    Returns (results_dict, errors_dict, timed_out_keys_tuple). Daemon threads never block Python exit
+    if a slow call outlives the deadline.
+    """
+    if not tasks:
+        return {}, {}, ()
+
+    results = {}
+    errors = {}
+    threads = {}
+
+    def _worker(key, fn):
+        try:
+            results[key] = fn()
+        except Exception as exc:
+            errors[key] = exc
+
+    for key, fn in tasks.items():
+        thread = threading.Thread(target=_worker, args=(key, fn), daemon=True)
+        threads[key] = thread
+        thread.start()
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    for thread in threads.values():
+        remaining = max(0.0, deadline - time.monotonic())
+        thread.join(timeout=remaining)
+
+    timed_out = tuple(key for key, thread in threads.items() if thread.is_alive())
+    return results, errors, timed_out

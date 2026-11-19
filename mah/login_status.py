@@ -18,14 +18,19 @@ from datetime import UTC, datetime
 import json
 import subprocess
 
+from . import process_tree
+
 CLAUDE_AUTH_METHODS = {"claude.ai", "api_key", "api_key_helper", "oauth_token", "third_party", "none"}
 CODEX_SUBSCRIPTION = "Logged in using ChatGPT"
-TIMEOUT_SECONDS = 20
+TIMEOUT_SECONDS = 10
+_REAL_SUBPROCESS_RUN = subprocess.run
 
 
 def _status(argv, environment):
-    return subprocess.run([str(part) for part in argv], stdin=subprocess.DEVNULL, capture_output=True,
-                          shell=False, env=environment, timeout=TIMEOUT_SECONDS)
+    if subprocess.run is not _REAL_SUBPROCESS_RUN:
+        return subprocess.run([str(part) for part in argv], stdin=subprocess.DEVNULL, capture_output=True,
+                              shell=False, env=environment, timeout=TIMEOUT_SECONDS)
+    return process_tree.run_contained(argv, env=environment, timeout=TIMEOUT_SECONDS, popen=subprocess.Popen)
 
 
 def claude_login_reasons(executable, *, now=None):
@@ -105,6 +110,7 @@ def _quota_reply(executable, environment, timeout, *, cwd=None):
                                    stderr=subprocess.DEVNULL, shell=False, env=environment, cwd=cwd)
     except (OSError, ValueError):
         return None
+    job, _ = process_tree.contain(process)
     replies = []
     finished = threading.Event()
 
@@ -117,9 +123,15 @@ def _quota_reply(executable, environment, timeout, *, cwd=None):
                     break
         except (OSError, ValueError):
             pass
-        finished.set()
+        finally:
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
+            finished.set()
 
-    threading.Thread(target=read, daemon=True).start()
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     try:
         for message in QUOTA_MESSAGES:
             process.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
@@ -128,16 +140,12 @@ def _quota_reply(executable, environment, timeout, *, cwd=None):
     except (OSError, ValueError):
         pass
     finally:
+        process_tree.terminate_tree(process, job)
+        reader.join(timeout=0.3)
         try:
-            process.kill()
-            process.wait(5)
-        except (OSError, subprocess.TimeoutExpired):
+            process.stdin.close()
+        except OSError:
             pass
-        for stream in (process.stdin, process.stdout):
-            try:
-                stream.close()
-            except OSError:
-                pass
     return replies[0] if replies else None
 
 

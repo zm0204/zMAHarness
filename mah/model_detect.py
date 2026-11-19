@@ -1,5 +1,4 @@
 """Read-only account model detection, routing cache I/O, and `mah models` report (spec 3d)."""
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -9,7 +8,9 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import tempfile
+import threading
 
+from . import process_tree
 from .adapters import registry
 from .atomic_io import atomic_write
 from .catalog import effective_efforts, load_catalog, local_catalog_path
@@ -20,10 +21,14 @@ from .ledger import TARGET_ID, valid_id
 from .login_status import claude_login_reasons
 
 DETECT_TIMEOUT_SECONDS = 10
+OVERALL_TIMEOUT_SECONDS = 25
+PARTIAL_TIMEOUT_WARNING = "部分查詢逾時"
 CACHE_FILENAME = "routing_cache.json"
 CACHE_VERSION = 1
 FUTURE_SKEW_TOLERANCE = timedelta(minutes=5)
 DEFAULT_INSPECT_ADAPTERS = ("agy-print", "codex-exec", "claude-print")
+_REAL_SUBPROCESS_RUN = subprocess.run
+_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -127,6 +132,14 @@ def write_routing_cache(path, data):
         return False
 
 
+def update_routing_cache(path, mutator):
+    """Thread-safe read-modify-write of `routing_cache.json`. Never raises."""
+    with _CACHE_LOCK:
+        latest = read_routing_cache(path)
+        mutator(latest)
+        return write_routing_cache(path, latest)
+
+
 def _parse_iso(value):
     if not isinstance(value, str):
         return None
@@ -141,14 +154,22 @@ def _iso_utc(moment):
     return moment.astimezone(UTC).isoformat(timespec="seconds")
 
 
+def _run_lister_command(argv, *, env, cwd, timeout):
+    if subprocess.run is not _REAL_SUBPROCESS_RUN:
+        return subprocess.run(
+            argv, stdin=subprocess.DEVNULL, capture_output=True, shell=False,
+            env=env, cwd=cwd, timeout=timeout,
+        )
+    return process_tree.run_contained(argv, env=env, cwd=cwd, timeout=timeout, popen=subprocess.Popen)
+
+
 def list_agy_models(config, executable, *, timeout=DETECT_TIMEOUT_SECONDS):
     """Run `agy.exe models` (read-only, no inference) and parse `<ID>\\t<display>` lines (spec §3.2)."""
     from .adapters.agy_print import _worker_environment
 
     try:
-        result = subprocess.run(
+        result = _run_lister_command(
             [str(executable), "models"],
-            stdin=subprocess.DEVNULL, capture_output=True, shell=False,
             env=_worker_environment(), cwd=query_cwd(config), timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
@@ -175,9 +196,8 @@ def list_codex_models(config, executable, *, timeout=DETECT_TIMEOUT_SECONDS):
     from .adapters.codex_exec import codex_environment
 
     try:
-        result = subprocess.run(
+        result = _run_lister_command(
             [str(executable), "debug", "models"],
-            stdin=subprocess.DEVNULL, capture_output=True, shell=False,
             env=codex_environment(), cwd=query_cwd(config), timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
@@ -279,7 +299,8 @@ def _resolve_executable(config, adapter, exclude_roots):
     return executable, None
 
 
-def detect_adapters(config, adapters, *, ttl_hours=12, refresh=False, now=None, exclude_roots=()):
+def detect_adapters(config, adapters, *, ttl_hours=12, refresh=False, now=None, exclude_roots=(),
+                    overall_timeout=OVERALL_TIMEOUT_SECONDS):
     """Detect available account models for `adapters` in parallel using registry.MODEL_LISTERS."""
     moment = now or datetime.now(UTC)
     cpath = cache_path(config)
@@ -319,26 +340,30 @@ def detect_adapters(config, adapters, *, ttl_hours=12, refresh=False, now=None, 
             ids=(), efforts={}, executable_found=True, detail=listed.detail,
         ), None
 
-    if len(unique_adapters) <= 1:
-        for adapter in unique_adapters:
-            record, update = probe(adapter)
+    done, errors, timed_out = process_tree.run_parallel_with_deadline(
+        {adapter: (lambda a=adapter: probe(a)) for adapter in unique_adapters},
+        timeout=overall_timeout,
+    )
+    for adapter in unique_adapters:
+        if adapter in done:
+            record, update = done[adapter]
             results[adapter] = record
             if update is not None:
                 pending_updates[adapter] = update
-    else:
-        with ThreadPoolExecutor(max_workers=len(unique_adapters)) as pool:
-            futures = {adapter: pool.submit(probe, adapter) for adapter in unique_adapters}
-            for adapter, future in futures.items():
-                record, update = future.result()
-                results[adapter] = record
-                if update is not None:
-                    pending_updates[adapter] = update
+        elif adapter in timed_out:
+            results[adapter] = DetectionRecord(
+                adapter=adapter, status="unknown", source="live", detail="timeout",
+            )
+        else:
+            exc = errors.get(adapter)
+            results[adapter] = DetectionRecord(
+                adapter=adapter, status="unknown", source="live",
+                detail=f"{type(exc).__name__}: {exc}" if exc else "error",
+            )
 
     if pending_updates:
-        # Re-read right before writing so concurrent writers' other sections stay intact.
-        latest = read_routing_cache(cpath)
-        latest.setdefault("detect", {}).update(pending_updates)
-        write_routing_cache(cpath, latest)
+        # Serialized read-modify-write so parallel detect/quota threads never overwrite each other.
+        update_routing_cache(cpath, lambda latest: latest.setdefault("detect", {}).update(pending_updates))
 
     return results
 
@@ -503,30 +528,79 @@ def _format_models_section(catalog, records, claude_info, *, max_effort):
     return entries
 
 
-def models_report(config, *, refresh=False, include_all=False, repo_catalog_path=None, now=None):
-    """Build the JSON report for `mah models` (catalog + detection + quota)."""
-    from .quota import get_quota_states
+def models_report(config, *, refresh=False, include_all=False, repo_catalog_path=None, now=None,
+                  overall_timeout=OVERALL_TIMEOUT_SECONDS):
+    """Build the JSON report for `mah models` (catalog + detection + quota) within `overall_timeout`."""
+    from .quota import QuotaState, cached_quota_fallback, get_quota_states
 
+    moment = now or datetime.now(UTC)
     catalog, warnings = load_catalog(local_path=local_catalog_path(config), repo_path=repo_catalog_path)
     ttl_hours = catalog.routing.detect_ttl_hours if catalog is not None else 12
 
     adapters = list(DEFAULT_INSPECT_ADAPTERS)
+    target_pools = ["chatgpt", "claude", "agy:gemini", "agy:claude"]
     if catalog is not None:
         for model in catalog.models:
             for route in model.routes:
                 if route.adapter not in adapters:
                     adapters.append(route.adapter)
+                if route.quota not in target_pools:
+                    target_pools.append(route.quota)
 
     lister_adapters = [a for a in adapters if a != "claude-print"]
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        detect_future = pool.submit(
-            detect_adapters, config, lister_adapters, ttl_hours=ttl_hours, refresh=refresh, now=now,
+    tasks = {}
+    for adapter in lister_adapters:
+        tasks[f"detect:{adapter}"] = (
+            lambda a=adapter: detect_adapters(
+                config, [a], ttl_hours=ttl_hours, refresh=refresh, now=moment, overall_timeout=overall_timeout,
+            )[a]
         )
-        claude_future = pool.submit(_claude_alias_status, config)
-        quota_future = pool.submit(get_quota_states, config, catalog, None, refresh=refresh, now=now)
-        records = detect_future.result()
-        claude_info = claude_future.result()
-        quota_states, quota_warnings = quota_future.result()
+    tasks["claude_alias"] = lambda: _claude_alias_status(config)
+    for pool_name in ("chatgpt", "claude"):
+        if pool_name in target_pools:
+            tasks[f"quota:{pool_name}"] = (
+                lambda p=pool_name: get_quota_states(
+                    config, catalog, [p], refresh=refresh, now=moment, overall_timeout=overall_timeout,
+                )
+            )
+    agy_pools = [p for p in target_pools if p.startswith("agy:")]
+    tasks["quota:agy"] = lambda: get_quota_states(
+        config, catalog, agy_pools, refresh=refresh, now=moment, overall_timeout=overall_timeout,
+    )
+
+    done, _errors, timed_out = process_tree.run_parallel_with_deadline(tasks, timeout=overall_timeout)
+    partial_timeout = bool(timed_out)
+
+    records = {}
+    for adapter in lister_adapters:
+        key = f"detect:{adapter}"
+        if key in done:
+            records[adapter] = done[key]
+        else:
+            records[adapter] = DetectionRecord(adapter=adapter, status="unknown", source="live", detail="timeout")
+
+    if "claude_alias" in done:
+        claude_info = done["claude_alias"]
+    else:
+        claude_info = {"status": "alias", "login": "unknown", "detail": "timeout",
+                       "observed": claude_observed_models(config.database)}
+
+    quota_states = {}
+    quota_warnings = []
+    for pool_name in ("chatgpt", "claude"):
+        key = f"quota:{pool_name}"
+        if key in done:
+            st_map, w_list = done[key]
+            quota_states.update(st_map)
+            quota_warnings.extend(w_list)
+        elif pool_name in target_pools:
+            quota_states[pool_name] = cached_quota_fallback(config, catalog, pool_name, now=moment)
+    if "quota:agy" in done:
+        st_map, w_list = done["quota:agy"]
+        quota_states.update(st_map)
+        quota_warnings.extend(w_list)
+    for pool_name in target_pools:
+        quota_states.setdefault(pool_name, QuotaState(pool=pool_name, state="unknown", source="none"))
 
     # Keep a consistent ordering across adapters.
     ordered_records = {}
@@ -537,7 +611,9 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
             ordered_records[adapter] = records[adapter]
 
     max_effort = config.values["limits"]["max_effort"]
-    all_warnings = [*warnings, *quota_warnings]
+    all_warnings = list(dict.fromkeys([
+        *warnings, *quota_warnings, *([PARTIAL_TIMEOUT_WARNING] if partial_timeout else ()),
+    ]))
     return {
         "catalog": {
             "updated": catalog.updated if catalog is not None else None,

@@ -1,9 +1,9 @@
 """Model routing, heterogeneous selection, quota-aware fallback, and manual overrides (spec 3d §5)."""
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from . import process_tree
 from .adapters import registry
 from .catalog import (
     EFFORT_RANK,
@@ -17,9 +17,14 @@ from .catalog import (
 )
 from .config import adapter_enabled
 from .ledger import EFFORT_LEVELS, TARGET_ID, valid_id
-from .model_detect import DetectionRecord, detect_adapters
-from .preflight import INVALID_MODEL_ID, adapter_checks, common_checks
-from .quota import QuotaState, get_quota_states
+from .model_detect import (
+    OVERALL_TIMEOUT_SECONDS,
+    PARTIAL_TIMEOUT_WARNING,
+    DetectionRecord,
+    detect_adapters,
+)
+from .preflight import INVALID_MODEL_ID, AdapterCheckReport, adapter_checks, common_checks
+from .quota import QuotaState, cached_quota_fallback, get_quota_states
 
 CONTROLLER_FAMILIES = {"codex": "gpt", "claude": "claude", "other": None}
 POOL_LABELS = {
@@ -238,35 +243,79 @@ def _passes_static(candidate, *, config, mode, excluded_family, max_effort, skip
     return True
 
 
-def _parallel_probe(config, catalog, adapters, pools, *, repo_root, refresh, now):
-    """Run only needed adapter checks, model detections, and quota queries in parallel without duplicating codex app-server."""
+def _parallel_probe(config, catalog, adapters, pools, *, repo_root, refresh, now,
+                    overall_timeout=OVERALL_TIMEOUT_SECONDS):
+    """Run only needed adapter checks, model detections, and quota queries in parallel within `overall_timeout`."""
     unique_adapters = tuple(dict.fromkeys(adapters))
     unique_pools = tuple(dict.fromkeys(pools))
     ttl_hours = catalog.routing.detect_ttl_hours if catalog is not None else 12
     exclude_roots = (repo_root,) if repo_root else ()
 
-    with ThreadPoolExecutor(max_workers=max(2, len(unique_adapters) + 2)) as executor:
+    tasks = {}
+    for adapter in unique_adapters:
         # check_codex_quota=False avoids a duplicate app-server call; quota_states handles ChatGPT quota.
-        check_futures = {
-            adapter: executor.submit(
-                adapter_checks, config, adapter, repo_root, check_codex_quota=False,
+        tasks[f"check:{adapter}"] = (
+            lambda a=adapter: adapter_checks(config, a, repo_root, check_codex_quota=False)
+        )
+        tasks[f"detect:{adapter}"] = (
+            lambda a=adapter: detect_adapters(
+                config, [a], ttl_hours=ttl_hours, refresh=refresh, now=now,
+                exclude_roots=exclude_roots, overall_timeout=overall_timeout,
+            )[a]
+        )
+    agy_pools = [p for p in unique_pools if p.startswith("agy:")]
+    for pool_name in unique_pools:
+        if pool_name.startswith("agy:"):
+            continue
+        tasks[f"quota:{pool_name}"] = (
+            lambda p=pool_name: get_quota_states(
+                config, catalog, [p], refresh=refresh, now=now,
+                exclude_roots=exclude_roots, overall_timeout=overall_timeout,
             )
-            for adapter in unique_adapters
-        }
-        detect_future = executor.submit(
-            detect_adapters, config, unique_adapters, ttl_hours=ttl_hours,
-            refresh=refresh, now=now, exclude_roots=exclude_roots,
-        ) if unique_adapters else None
-        quota_future = executor.submit(
-            get_quota_states, config, catalog, unique_pools, refresh=refresh, now=now,
-            exclude_roots=exclude_roots,
-        ) if unique_pools else None
+        )
+    if agy_pools:
+        tasks["quota:agy"] = lambda: get_quota_states(
+            config, catalog, agy_pools, refresh=refresh, now=now,
+            exclude_roots=exclude_roots, overall_timeout=overall_timeout,
+        )
 
-        adapter_reports = {adapter: fut.result() for adapter, fut in check_futures.items()}
-        detected = detect_future.result() if detect_future is not None else {}
-        quota_states, quota_warnings = quota_future.result() if quota_future is not None else ({}, [])
+    done, _errors, timed_out = process_tree.run_parallel_with_deadline(tasks, timeout=overall_timeout)
+    warnings = [PARTIAL_TIMEOUT_WARNING] if timed_out else []
 
-    return adapter_reports, detected, quota_states, quota_warnings
+    adapter_reports = {}
+    detected = {}
+    for adapter in unique_adapters:
+        if f"check:{adapter}" in done:
+            adapter_reports[adapter] = done[f"check:{adapter}"]
+        else:
+            adapter_reports[adapter] = AdapterCheckReport(
+                adapter=adapter, enabled=True, executable=None, executable_found=None,
+                reasons=(PARTIAL_TIMEOUT_WARNING,),
+            )
+        if f"detect:{adapter}" in done:
+            detected[adapter] = done[f"detect:{adapter}"]
+        else:
+            detected[adapter] = DetectionRecord(adapter=adapter, status="unknown", source="live", detail="timeout")
+
+    quota_states = {}
+    for pool_name in unique_pools:
+        if pool_name.startswith("agy:"):
+            continue
+        key = f"quota:{pool_name}"
+        if key in done:
+            st_map, w_list = done[key]
+            quota_states.update(st_map)
+            warnings.extend(w_list)
+        else:
+            quota_states[pool_name] = cached_quota_fallback(config, catalog, pool_name, now=now)
+    if agy_pools and "quota:agy" in done:
+        st_map, w_list = done["quota:agy"]
+        quota_states.update(st_map)
+        warnings.extend(w_list)
+    for pool_name in unique_pools:
+        quota_states.setdefault(pool_name, QuotaState(pool=pool_name, state="unknown", source="none"))
+
+    return adapter_reports, detected, quota_states, list(dict.fromkeys(warnings))
 
 
 def _legacy_defaults(common, task, mode, *, warnings):
@@ -440,7 +489,7 @@ def _infer_effort_from_id(model_id):
 
 
 def _route_override(common, catalog, *, task, level, mode, controller, override, effort, card_effort,
-                    adapter_hint, refresh, verbose, now, warnings):
+                    adapter_hint, refresh, verbose, now, warnings, overall_timeout=OVERALL_TIMEOUT_SECONDS):
     config = common.config
     max_effort = config.values["limits"]["max_effort"]
     tight_percent = catalog.routing.tight_percent
@@ -471,6 +520,7 @@ def _route_override(common, catalog, *, task, level, mode, controller, override,
         normal = _route_normal(
             common, catalog, task=task, level=level, mode=mode, controller=controller,
             refresh=refresh, verbose=verbose, now=now, warnings=warnings, force_effort=requested_effort,
+            overall_timeout=overall_timeout,
         )
         normal["resolved"] = True
         return normal
@@ -539,7 +589,7 @@ def _route_override(common, catalog, *, task, level, mode, controller, override,
         probe_pools = [r.quota for r in routes]
         adapter_reports, detected, quota_states, quota_warnings = _parallel_probe(
             config, catalog, probe_adapters, probe_pools,
-            repo_root=common.repo_root, refresh=refresh, now=now,
+            repo_root=common.repo_root, refresh=refresh, now=now, overall_timeout=overall_timeout,
         )
         all_warnings = [*warnings, *quota_warnings]
 
@@ -623,7 +673,7 @@ def _route_override(common, catalog, *, task, level, mode, controller, override,
     exclude_roots = (common.repo_root,) if common.repo_root else ()
     detected = detect_adapters(
         config, lister_adapters, ttl_hours=catalog.routing.detect_ttl_hours,
-        refresh=refresh, now=now, exclude_roots=exclude_roots,
+        refresh=refresh, now=now, exclude_roots=exclude_roots, overall_timeout=overall_timeout,
     ) if lister_adapters else {}
     detected_hits = [
         adapter for adapter, rec in detected.items()
@@ -705,7 +755,8 @@ def _route_override(common, catalog, *, task, level, mode, controller, override,
             "note": None, "note_data": None, "warnings": list(warnings),
         }
     quota_states, quota_warnings = get_quota_states(
-        config, catalog, [pool_name] if pool_name else [], refresh=refresh, now=now, exclude_roots=exclude_roots,
+        config, catalog, [pool_name] if pool_name else [], refresh=refresh, now=now,
+        exclude_roots=exclude_roots, overall_timeout=overall_timeout,
     ) if pool_name else ({}, [])
     note, note_data = _override_quota_note(
         text, pool_name, None, quota_states, tight_percent=tight_percent, now=now,
@@ -726,7 +777,7 @@ def _route_override(common, catalog, *, task, level, mode, controller, override,
 
 
 def _route_normal(common, catalog, *, task, level, mode, controller, refresh, verbose, now, warnings,
-                  force_effort=None):
+                  force_effort=None, overall_timeout=OVERALL_TIMEOUT_SECONDS):
     config = common.config
     max_effort = config.values["limits"]["max_effort"]
     tight_percent = catalog.routing.tight_percent
@@ -779,9 +830,9 @@ def _route_normal(common, catalog, *, task, level, mode, controller, refresh, ve
     needed_pools = [c.route.quota for c in (*static_cell, *static_opt3)]
     adapter_reports, detected, quota_states, quota_warnings = _parallel_probe(
         config, catalog, needed_adapters, needed_pools,
-        repo_root=common.repo_root, refresh=refresh, now=now,
+        repo_root=common.repo_root, refresh=refresh, now=now, overall_timeout=overall_timeout,
     )
-    all_warnings = [*warnings, *quota_warnings]
+    all_warnings = list(dict.fromkeys([*warnings, *quota_warnings]))
 
     def route_ready(candidate):
         if not adapter_reports[candidate.route.adapter].ok:
@@ -903,7 +954,8 @@ def _route_normal(common, catalog, *, task, level, mode, controller, refresh, ve
 
 
 def route(repo, *, task, level, mode, controller, config_path=None, override=None, effort=None,
-          card_effort=None, adapter=None, refresh=False, verbose=False, now=None, repo_catalog_path=None):
+          card_effort=None, adapter=None, refresh=False, verbose=False, now=None, repo_catalog_path=None,
+          overall_timeout=OVERALL_TIMEOUT_SECONDS):
     """Run pre-card feasibility checks, model detection, quota lookup, and option 2/3 selection (spec §5-6)."""
     moment = now or datetime.now(UTC)
     common = common_checks(repo, config_path)
@@ -925,10 +977,12 @@ def route(repo, *, task, level, mode, controller, config_path=None, override=Non
                 common, catalog, task=task, level=level, mode=mode, controller=controller,
                 override=override, effort=effort, card_effort=card_effort, adapter_hint=adapter,
                 refresh=refresh, verbose=verbose, now=moment, warnings=warnings,
+                overall_timeout=overall_timeout,
             )
         return _route_normal(
             common, catalog, task=task, level=level, mode=mode, controller=controller,
             refresh=refresh, verbose=verbose, now=moment, warnings=warnings,
+            overall_timeout=overall_timeout,
         )
     except Exception as exc:
         return _legacy_defaults(
