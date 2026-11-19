@@ -79,6 +79,14 @@ GPT 系列（例如 `gpt-6.1-terra`、`gpt-6-luna`）走 `codex-exec`，effort �
 `codex-exec` 只支援 Context-Bundle 與唯讀模板；需要 Disposable Worktree 時不要建議 GPT 模型。
 **主控是 Codex 時，卡片不主動建議 `codex-exec`**（同家族，缺少異質視角），只有使用者明確指定 GPT 模型時才用。
 
+**Gemini 4 Neon、Hydrogen 只在使用者指定時使用**，卡片的預設建議維持上表（T2 仍是 Argon）。
+2026-11-19 曾以 Neon 在 agy 直接做全面審查，找到一個已證實的高風險問題；但還沒有經 `agy-print` 的真實派工驗收，先不改預設。
+
+**Orchestrator 不可作為 Worker。** `gemini-pro-orchestrator-neon`、`gemini-pro-orchestrator-g1-pro` 等
+`gemini-pro-orchestrator-` 開頭的模型會自行派出子代理，`--settings` 的 deny 規則能否約束這些子代理尚未驗證，
+無法保證唯讀。不要建議或接受它；使用者手打指定時，回報這個原因並改提一般 Gemini 模型。
+`card create`、`dispatch` 會以結束碼 2 拒絕，`mah preflight --model <ID>` 也會回報不 ok。
+
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
 這類任務一般建議 `gemini-4-argon-high · high`，Claude Code 的 GPT 選項依上表。使用者手打指定時不受此限。
 
@@ -116,6 +124,8 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 | --- | --- | --- | --- |
 | Gemini 3.8 Flash | `gemini-3.8-flash-low` | `gemini-3.8-flash-medium` | `gemini-3.8-flash-high` |
 | Gemini 4 Argon | `gemini-4-argon-low` | `gemini-4-argon-medium` | `gemini-4-argon-high` |
+| Gemini 4 Neon | `gemini-4-neon-low` | `gemini-4-neon-medium` | `gemini-4-neon-high` |
+| Gemini 4 Hydrogen | `gemini-4-hydrogen-low` | `gemini-4-hydrogen-medium` | `gemini-4-hydrogen-high` |
 | Claude Sonnet 5.5 | `claude-sonnet-5-5-low` | `claude-sonnet-5-5-medium` | `claude-sonnet-5-5-high` |
 | Claude Opus 5.5 | `claude-opus-5-5-low` | `claude-opus-5-5-medium` | `claude-opus-5-5-high` |
 | Claude Sonnet（`claude-print`） | `sonnet` + `--effort low` | `sonnet` + `--effort medium` | `sonnet` + `--effort high` |
@@ -126,6 +136,9 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 | GPT 6.1 Sol（`codex-exec`） | `gpt-6.1-sol` + `--effort low` | `gpt-6.1-sol` + `--effort medium` | `gpt-6.1-sol` + `--effort high` |
 | GPT 6 Luna（`codex-exec`） | `gpt-6-luna` + `--effort low` | `gpt-6-luna` + `--effort medium` | `gpt-6-luna` + `--effort high` |
 
+Neon、Hydrogen 另有 xhigh（例如 `gemini-4-neon-xhigh`，搭配 `--effort xhigh`）。
+本機 TOML 的 `limits.max_effort` 預設 `high`，未調高時 xhigh 出卡會以結束碼 16 拒絕。
+
 `agy-print` 的模型 ID 帶有 effort 尾綴。`claude-print` 和 `codex-exec` 的模型 ID 固定，effort 另用 `--effort` 指定。
 只輸入 `sonnet` 或 `opus` 時，依「Adapter 路由」優先用 `claude-print`，effort 沿用卡片；`claude-print` 不可用時改用對應的 `agy-print` ID。
 指定 GPT 模型（例如「用 luna」、「換 gpt-6.1-terra」）時用 `codex-exec`，模型寫完整 ID（`luna` 即 `gpt-6-luna`），
@@ -134,6 +147,8 @@ effort 另用 `--effort`（`low`～`xhigh`）。codex-cli 0.169.0 探測通過�
 每次派工前都會自動探測工具宣告；新版 CLI 註冊的未知工具會被拒絕。原本是 Disposable Worktree 時須先改提 Context-Bundle。
 
 只輸入 `argon` 或 `4argon` 時，使用 `gemini-4-argon-high` 搭配 `--effort high`。
+只輸入 `neon` 或 `4neon` 時，使用 `gemini-4-neon-high` 搭配 `--effort high`；
+只輸入 `hydrogen` 或 `4hydrogen` 時，使用 `gemini-4-hydrogen-high` 搭配 `--effort high`。
 只指定 effort 時保留卡片上的模型系列，改用相符尾綴。若同時指定 Argon 與 `medium`，
 使用 `gemini-4-argon-medium` 搭配 `--effort medium`。
 
