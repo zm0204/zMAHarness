@@ -102,7 +102,7 @@ Skill 舊名為 `harness`。重跑安裝時，若上述兩處的舊 `harness` �
   - 只刪除已結束、而且已採納或拒絕（`accept`／`reject-result`）的 Run；`FAILED`、`FAILED_PRE_SUBMIT`、`CANCELLED`、`ABANDONED` 不需要採納決定。未結束的 Run、成功但尚未採納或拒絕的 Run、未到期的 Run 一律保留，清單會寫出原因。
   - Disposable Worktree 只在路徑是 `worktrees\<run_id>`、而且 HEAD 仍是快照提交或派工時的提交時，才以 `git worktree remove` 移除；不符合時 Worktree 和 Run 目錄都保留（`worktree_present`）。沒有 Run 紀錄的孤兒 Worktree 也會列出，只有快照提交訊息相符的才會移除。
   - Run 目錄或其中任何項目是符號連結或 junction 時拒絕刪除。帳本紀錄保留，刪除後 `mah status <run_id>` 仍可查詢（`task_evidence` 會是 `missing`）。
-  - `git worktree prune` 只在 `--apply`、而且該 repo 所有可 prune 的登記都位於 `worktrees` 底下時才執行，否則只回報。快照提交不另外清理，由 Git 自己的 gc 回收。
+  - `git worktree prune` 只在 `--apply`、而且該 repo 所有可 prune 的登記都位於 `worktrees` 底下時才執行，否則只回報；只列出時，`prune` 清單以 `status: 將執行` 標示 `--apply` 會執行的 prune，但不實際執行。Run 目錄因檔案被鎖住等原因刪除失敗時，該 Run 保留並標示 `delete_failed`（附錯誤訊息），其餘項目照常處理並輸出報告。快照提交不另外清理，由 Git 自己的 gc 回收。
 - **Run 卡住時**：`mah cleanup` 不會碰未結束的 Run。若 Run 卡住（例如所有派工都以結束碼 13 被拒），執行 `mah resolve <run_id> --mark-failed --reason "<原因>"` 結束它，Run 會變成 `FAILED`，Grant 不退回；不要手動刪除未結束 Run 的收據檔，否則它無法正常收集。
 - **codex-exec 一律以結束碼 17 拒絕，訊息提到 system Codex configuration 或 Windows Codex policy**：`C:\ProgramData\OpenAI\Codex\config.toml`、`requirements.toml` 或登錄檔 `HKLM\SOFTWARE\Policies\OpenAI\Codex` 的 `RequirementsPath` 存在時，Codex 會套用這些系統層設定，`--ignore-user-config` 擋不住，可能改變模型供應商、模型目錄或工具，所以 zMAHarness 一律拒絕。若這些檔案是你自己建立的，移除或改名後重試；若由公司管理，請不要繞過，改用其他 Worker。
 - **移除 zMAHarness**：刪除 Python 使用者套件目錄中的 `zmaharness.pth`（位置可用 `python -m site --user-site` 查詢）、上述兩處 `zmaharness` Skill 目錄，以及 `%LOCALAPPDATA%\zMAHarness`，最後刪除 clone 目錄。

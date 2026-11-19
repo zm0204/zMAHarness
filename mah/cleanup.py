@@ -10,7 +10,12 @@ A Run directory is deleted only when every condition holds; otherwise the report
 - not_expired: finished_at is not older than the threshold;
 - outside_state / link_refused / contains_link: the directory escapes the state directory, is a symbolic
   link or junction, or contains one;
-- worktree_present: the Run still has a worktree that is not verified for removal, or its removal failed.
+- worktree_present: the Run still has a worktree that is not verified for removal, or its removal failed;
+- delete_failed: deleting the Run directory failed part way (for example a locked file); delete_error holds
+  the error and the other entries are still processed.
+
+Listing collects the same repositories as --apply, so the prune entries preview the git worktree prune that
+--apply would run (status "將執行") without running it.
 """
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -169,9 +174,9 @@ class Cleanup:
                     and _linked_worktree_of(workspace, repo)
                     and _snapshot_verified(workspace, run_id, _launch_baseline(directory))):
                 reason = "worktree_present"
-            elif self.apply:
+            else:
                 self.repos.setdefault(normcase(str(repo)), repo)
-                if not _remove_worktree(repo, workspace):
+                if self.apply and not _remove_worktree(repo, workspace):
                     reason = "worktree_present"
                     entry["worktree_error"] = "git worktree remove failed"
         if reason is not None:
@@ -180,7 +185,10 @@ class Cleanup:
             # Checked again right before the irreversible step.
             if _is_link(directory) or _scan(directory)[1] or self.manager._directory(run_id) != directory:
                 return entry | {"action": "keep", "reason": "link_refused"}
-            shutil.rmtree(directory)
+            try:
+                shutil.rmtree(directory)
+            except OSError as error:
+                return entry | {"action": "keep", "reason": "delete_failed", "delete_error": str(error)}
         return entry | {"action": "deleted" if self.apply else "delete"}
 
     def orphan_entries(self, known):
@@ -205,6 +213,7 @@ class Cleanup:
                   or not _snapshot_verified(path, name, None)):
                 entries.append(entry | {"action": "keep", "reason": "snapshot_unverified"})
             elif not self.apply:
+                self.repos.setdefault(normcase(str(repo)), repo)
                 entries.append(entry | {"action": "delete", "repo": str(repo)})
             else:
                 self.repos.setdefault(normcase(str(repo)), repo)
@@ -214,7 +223,8 @@ class Cleanup:
         return entries
 
     def prune_entries(self):
-        """git worktree prune is repository-wide: run it only when every prunable entry is ours."""
+        """git worktree prune is repository-wide: run it only when every prunable entry is ours.
+        status: 將執行 (listing, --apply would run it), 已執行, 執行失敗, 不執行 (an entry is not ours)."""
         entries = []
         for repo in self.repos.values():
             try:
@@ -225,14 +235,17 @@ class Cleanup:
             if not prunable:
                 continue
             ours = all(item and Path(item).resolve().is_relative_to(self.worktree_root) for item in prunable)
-            pruned = False
-            if ours and self.apply:
+            pruned, status = False, "不執行"
+            if ours and not self.apply:
+                status = "將執行"
+            elif ours:
                 try:
                     _git(repo, "worktree", "prune", timeout=60)
-                    pruned = True
+                    pruned, status = True, "已執行"
                 except (OSError, ValueError):
-                    pass
-            entries.append({"repo": str(repo), "prunable": prunable, "pruned": pruned,
+                    status = "執行失敗"
+            entries.append({"repo": str(repo), "prunable": prunable, "command": "git worktree prune",
+                            "status": status, "pruned": pruned,
                             **({} if ours else {"reason": "prunable_outside_worktree_root"})})
         return entries
 

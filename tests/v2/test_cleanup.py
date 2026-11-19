@@ -283,6 +283,76 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
         self.assertFalse(report["prune"][0]["pruned"])
         self.assertIn(stale.name, self.registered())
 
+    # ---- delete failures and the prune preview ------------------------------------------------------------
+    @unittest.skipUnless(os.name == "nt", "An open handle locks a file only on Windows")
+    def test_locked_file_keeps_the_run_as_delete_failed_and_cleanup_continues(self):
+        locked_id, _, locked_directory = self.make_run()
+        other_id, _, other_directory = self.make_run()
+        with open(locked_directory / "task.md", "rb"):
+            report = self.clean(apply=True)
+        entry = self.entry(report, locked_id)
+        self.assertEqual((entry["action"], entry["reason"]), ("keep", "delete_failed"))
+        self.assertTrue(entry["delete_error"])
+        self.assertTrue((locked_directory / "task.md").is_file())
+        self.assertEqual(self.entry(report, other_id)["action"], "deleted")
+        self.assertFalse(other_directory.exists())
+        self.assertEqual((report["summary"]["runs"], report["summary"]["kept"]), (1, 1))
+        self.assertEqual(self.entry(self.clean(apply=True), locked_id)["action"], "deleted")
+
+    def test_delete_failure_is_reported_and_the_other_runs_are_still_deleted(self):
+        failing_id, _, failing_directory = self.make_run()
+        other_id, _, other_directory = self.make_run()
+        real_rmtree = shutil.rmtree
+
+        def rmtree(path, *args, **kwargs):
+            if Path(path) == failing_directory:
+                raise PermissionError(13, "locked", str(path))
+            return real_rmtree(path, *args, **kwargs)
+
+        with patch("mah.cleanup.shutil.rmtree", side_effect=rmtree):
+            report = self.clean(apply=True)
+        entry = self.entry(report, failing_id)
+        self.assertEqual((entry["action"], entry["reason"]), ("keep", "delete_failed"))
+        self.assertIn("locked", entry["delete_error"])
+        self.assertTrue(failing_directory.is_dir())
+        self.assertEqual(self.entry(report, other_id)["action"], "deleted")
+        self.assertFalse(other_directory.exists())
+        self.assertEqual(report["summary"]["kept"], 1)
+        json.dumps(report, ensure_ascii=False)
+
+    def test_listing_previews_the_prune_that_apply_runs(self):
+        self.make_run()
+        stale = self.stale_registration(self.trees)
+        report = self.clean()
+        self.assertEqual(len(report["prune"]), 1)
+        self.assertEqual((report["prune"][0]["command"], report["prune"][0]["status"], report["prune"][0]["pruned"]),
+                         ("git worktree prune", "將執行", False))
+        self.assertIn(stale.name, self.registered())
+        report = self.clean(apply=True)
+        self.assertEqual((report["prune"][0]["status"], report["prune"][0]["pruned"]), ("已執行", True))
+        self.assertNotIn(stale.name, self.registered())
+
+    def test_listing_previews_the_prune_for_an_orphan_worktree_repository(self):
+        orphan = f"orphan-{uuid4().hex}"
+        (self.repo / "sample.txt").write_text("snapshot change\n", encoding="utf-8")
+        prepare_worktree(self.repo, self.trees, orphan)
+        stale = self.stale_registration(self.trees)
+        before = tree_state(self.state, self.trees, self.repo / ".git")
+        report = self.clean()
+        self.assertEqual([item["status"] for item in report["prune"]], ["將執行"])
+        self.assertEqual(tree_state(self.state, self.trees, self.repo / ".git"), before)
+        self.assertIn(stale.name, self.registered())
+
+    def test_listing_marks_a_blocked_prune_as_not_run(self):
+        self.make_run()
+        outside = self.root / "elsewhere"
+        outside.mkdir()
+        stale = self.stale_registration(outside)
+        report = self.clean()
+        self.assertEqual((report["prune"][0]["status"], report["prune"][0]["reason"]),
+                         ("不執行", "prunable_outside_worktree_root"))
+        self.assertIn(stale.name, self.registered())
+
 
 class CleanupCommandTests(unittest.TestCase):
     def setUp(self):
