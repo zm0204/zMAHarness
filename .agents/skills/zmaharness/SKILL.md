@@ -61,7 +61,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
   協作選項在說明中列出該選項的模型 · effort、任務、授權。
 - **只有問題文字與選項字串**（例如 Codex 一般模式的 `request_user_input_async`）。
   問題文字放完整五項，每項一行。每個協作選項的字串都須寫出模型 ID 和 effort，
-  例如「繼續協作（建議：gemini-4-argon-medium · medium）」。不得只寫「繼續協作（建議）」或「繼續協作（備選）」。
+  例如「繼續協作（建議：gemini-4-neon-medium · medium）」。不得只寫「繼續協作（建議）」或「繼續協作（備選）」。
 
 依下表選擇模型。T4、T5 也依實際任務的複雜度與所需視角判斷。
 
@@ -69,8 +69,8 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | --- | --- |
 | Claude Code 主控的 Review／T1 第二意見，符合 Context-Bundle | 本機 `codex debug models` 確認 GPT 可用，且 `codex-exec` 和 `agy-print` 均通過出卡前檢查時，Review 用 `gpt-6.1-terra · medium`，T1 用 `gpt-6.1-terra · high`，提供不同模型家族的程式審查。 |
 | T3 大量資料整理／研究，或小型常規檢查 | `gemini-3.8-flash-low · low`。需要整合較多線索時用 `gemini-3.8-flash-medium · medium`。 |
-| T2 核心邏輯／跨模組高風險 Review | `gemini-4-argon-medium · medium`。跨模組交互複雜時用 `gemini-4-argon-high · high`。 |
-| T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `sonnet · high`、`opus · high` 或 `gemini-4-argon-high · high`，依所需視角與深度選擇。 |
+| T2 核心邏輯／跨模組高風險 Review | `gemini-4-neon-medium · medium`。跨模組交互複雜時用 `gemini-4-neon-high · high`。 |
+| T1 連續修復失敗的 Second Opinion，或需要異質視角深度推理 | `sonnet · high`、`opus · high` 或 `gemini-4-neon-high · high`，依所需視角與深度選擇。 |
 
 **Adapter 路由。** Gemini 系列用 `agy-print`。Claude 系列優先用 `claude-print`，模型寫 Claude 的名稱（`sonnet`、`opus`）加上 effort。
 `claude-print` 的出卡前檢查不 ok 時，Claude 模型改用 `agy-print` 的 `claude-sonnet-5-5-<effort>`、`claude-opus-5-5-<effort>` ID；
@@ -79,8 +79,10 @@ GPT 系列（例如 `gpt-6.1-terra`、`gpt-6-luna`）走 `codex-exec`，effort �
 `codex-exec` 只支援 Context-Bundle 與唯讀模板；需要 Disposable Worktree 時不要建議 GPT 模型。
 **主控是 Codex 時，卡片不主動建議 `codex-exec`**（同家族，缺少異質視角），只有使用者明確指定 GPT 模型時才用。
 
-**Gemini 4 Neon、Hydrogen 只在使用者指定時使用**，卡片的預設建議維持上表（T2 仍是 Argon）。
-2026-11-19 曾以 Neon 在 agy 直接做全面審查，找到一個已證實的高風險問題；但還沒有經 `agy-print` 的真實派工驗收，先不改預設。
+**Gemini 4 Neon 是 Gemini 審查的預設**（上表的 T2、T1 第二意見，以及下方的選項 3）。Neon 已有兩次實測：
+2026-11-19 在 agy 直接做全面審查，找到一個已證實的高風險問題；同日經 `agy-print` 真實派工（agy 1.5.12，Context-Bundle Review），
+Run 為 `SUCCEEDED`、驗收 `ACCEPTED`，輸出格式沒有衝突，因此設為預設。
+Gemini 4 Argon 保留在模型對照表與手打別名，列為可指定。Gemini 4 Hydrogen 只在使用者指定時使用。
 
 **Orchestrator 不可作為 Worker。** `gemini-pro-orchestrator-neon`、`gemini-pro-orchestrator-g1-pro` 等
 `gemini-pro-orchestrator-` 開頭的模型會自行派出子代理，`--settings` 的 deny 規則能否約束這些子代理尚未驗證，
@@ -88,7 +90,7 @@ GPT 系列（例如 `gpt-6.1-terra`、`gpt-6-luna`）走 `codex-exec`，effort �
 `card create`、`dispatch` 會以結束碼 2 拒絕，`mah preflight --model <ID>` 也會回報不 ok。
 
 T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家族的模型。主控 Agent 是 Claude 時，
-這類任務一般建議 `gemini-4-argon-high · high`，Claude Code 的 GPT 選項依上表。使用者手打指定時不受此限。
+這類任務一般建議 `gemini-4-neon-high · high`，Claude Code 的 GPT 選項依上表。使用者手打指定時不受此限。
 
 依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。
 
@@ -98,10 +100,10 @@ T1 第二意見或需要異質視角時，優先選擇與主控 Agent 不同家�
 
 核准後嚴禁自動從 Context-Bundle 改成可讀範圍更大的 Disposable Worktree。需要擴大範圍時，重新提議並等待回覆。
 
-符合上表的 Claude Code 主控條件時，【建議模型】與選項 2 用表中的 GPT，選項 3 用 `gemini-4-argon-high · high`。
-其他情況，選項 2 顯示與卡片相同的建議模型。若選項 2 是 Argon 或 Claude，選項 3 用
+符合上表的 Claude Code 主控條件時，【建議模型】與選項 2 用表中的 GPT，選項 3 用 `gemini-4-neon-high · high`。
+其他情況，選項 2 顯示與卡片相同的建議模型。若選項 2 是 Neon、Argon 或 Claude，選項 3 用
 `gemini-3.8-flash-low · low` 供節省額度。若選項 2 是 Flash Low 或 Flash Medium，
-選項 3 用 `gemini-4-argon-high · high` 供一鍵升級。
+選項 3 用 `gemini-4-neon-high · high` 供一鍵升級。
 
 1. `不同意（由主控 Agent 自己繼續完成）`
 2. `繼續協作（主控 Agent 建議：<本次建議模型 · effort>）`
