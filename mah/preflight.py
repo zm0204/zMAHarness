@@ -1,15 +1,16 @@
 """Checks that run before a collaboration card is offered and before a dispatch reserves a Grant."""
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import subprocess
 from tempfile import mkstemp
 
 from .adapters.registry import executable_lookup, executable_missing_reason, refused_model_reason
-from .config import HOME_VARIABLE, ConfigError, adapter_enabled, default_config_path, load_config, \
+from .config import HOME_VARIABLE, Config, ConfigError, adapter_enabled, default_config_path, load_config, \
     sandbox_redirect_detected
 from .executable_path import EXECUTABLE_INSIDE_PROJECT, inside_roots
 from .ledger import TARGET_ID, LedgerError, valid_id
-from .login_status import login_reasons
+from .login_status import codex_login_reasons, login_reasons
 from .model_detect import query_cwd
 
 INVALID_MODEL_ID = ("模型 ID {model!r} 格式不符：須以英文字母或數字開頭，只能包含英文字母、數字與 _ . : / -，"
@@ -57,22 +58,37 @@ def git_toplevel(path):
     return None, _git_failed(first_line or f"git 結束碼 {result.returncode}，沒有錯誤訊息")
 
 
-def preflight(repo, adapter, config_path=None, model=None):
-    """No ledger and no writes under zMAHarness or the project. Returns the report.
+@dataclass(frozen=True)
+class CommonCheckReport:
+    repo_root: str | None
+    config_path: Path
+    config_found: bool
+    config: Config | None
+    sandbox_redirect_detected: bool
+    needs_unsandboxed_dispatch: bool
+    reasons: tuple[str, ...]
 
-    For claude-print and codex-exec it runs the CLI's own login status command (no inference request);
-    that CLI may refresh files in its own home folder. For codex-exec it also reads the ChatGPT quota
-    (read-only, no inference) and blocks only when the quota is confirmed exhausted.
-    With a model ID it also reports an ID card creation would reject (malformed or refused by the Adapter),
-    so the card is never proposed.
-    """
+    @property
+    def ok(self):
+        return not self.reasons
+
+
+@dataclass(frozen=True)
+class AdapterCheckReport:
+    adapter: str
+    enabled: bool
+    executable: Path | None
+    executable_found: bool | None
+    reasons: tuple[str, ...]
+
+    @property
+    def ok(self):
+        return not self.reasons
+
+
+def common_checks(repo, config_path=None):
+    """Read-only checks shared by preflight and route: Git project, local config, and sandbox detection."""
     reasons = []
-    if model is not None:
-        # The same full match card creation applies, so a padded or malformed ID is never reported ok.
-        if not valid_id(TARGET_ID, model):
-            reasons.append(INVALID_MODEL_ID.format(model=model))
-        elif (refused := refused_model_reason(adapter, model)) is not None:
-            reasons.append(refused)
     repo_root, git_reason = git_toplevel(repo)
     if git_reason is not None:
         reasons.append(git_reason)
@@ -92,6 +108,22 @@ def preflight(repo, adapter, config_path=None, model=None):
         else:
             reasons.append(f"找不到本機設定檔 {path}，請先執行 setup.ps1。")
 
+    redirected = sandbox_redirect_detected()
+    return CommonCheckReport(
+        repo_root=repo_root,
+        config_path=path,
+        config_found=config_found,
+        config=config,
+        sandbox_redirect_detected=redirected,
+        # Advisory: only the Codex AppContainer redirect is recognized; dispatch also probes for writes.
+        needs_unsandboxed_dispatch=redirected,
+        reasons=tuple(reasons),
+    )
+
+
+def adapter_checks(config, adapter, repo_root=None, *, quota_state=None, check_codex_quota=True):
+    """Read-only per-adapter checks: enabled, executable lookup & location, subscription login, and codex quota."""
+    reasons = []
     enabled = adapter_enabled(config, adapter) if config is not None else False
     if config is not None and not enabled:
         reasons.append(f"{adapter} 未在本機設定啟用（adapters.enabled）")
@@ -106,20 +138,51 @@ def preflight(repo, adapter, config_path=None, model=None):
         roots = (repo_root, config.values["paths"]["worktree_root"])
         if inside_roots(executable, roots):
             reasons.append(EXECUTABLE_INSIDE_PROJECT.format(path=Path(executable).resolve()))
+        elif adapter == "codex-exec" and not check_codex_quota:
+            reasons.extend(codex_login_reasons(executable))
         else:
-            reasons.extend(login_reasons(adapter, executable, cwd=query_cwd(config)))
+            reasons.extend(login_reasons(adapter, executable, cwd=query_cwd(config), quota_state=quota_state))
 
-    redirected = sandbox_redirect_detected()
+    return AdapterCheckReport(
+        adapter=adapter,
+        enabled=enabled,
+        executable=executable,
+        executable_found=executable_found,
+        reasons=tuple(reasons),
+    )
+
+
+def preflight(repo, adapter, config_path=None, model=None):
+    """No ledger and no writes under zMAHarness or the project. Returns the report.
+
+    For claude-print and codex-exec it runs the CLI's own login status command (no inference request);
+    that CLI may refresh files in its own home folder. For codex-exec it also reads the ChatGPT quota
+    (read-only, no inference) and blocks only when the quota is confirmed exhausted.
+    With a model ID it also reports an ID card creation would reject (malformed or refused by the Adapter),
+    so the card is never proposed.
+    """
+    reasons = []
+    if model is not None:
+        # The same full match card creation applies, so a padded or malformed ID is never reported ok.
+        if not valid_id(TARGET_ID, model):
+            reasons.append(INVALID_MODEL_ID.format(model=model))
+        elif (refused := refused_model_reason(adapter, model)) is not None:
+            reasons.append(refused)
+
+    common = common_checks(repo, config_path)
+    reasons.extend(common.reasons)
+    checked = adapter_checks(common.config, adapter, common.repo_root)
+    reasons.extend(checked.reasons)
+
     return {
-        "repo_root": repo_root,
-        "config_path": str(path),
-        "config_found": config_found,
+        "repo_root": common.repo_root,
+        "config_path": str(common.config_path),
+        "config_found": common.config_found,
         "adapter": adapter,
-        "adapter_enabled": enabled,
-        "adapter_executable_found": executable_found,
-        "sandbox_redirect_detected": redirected,
-        # Advisory: only the Codex AppContainer redirect is recognized; dispatch also probes for writes.
-        "needs_unsandboxed_dispatch": redirected,
+        "adapter_enabled": checked.enabled,
+        "adapter_executable_found": checked.executable_found,
+        "sandbox_redirect_detected": common.sandbox_redirect_detected,
+        "needs_unsandboxed_dispatch": common.needs_unsandboxed_dispatch,
         "ok": not reasons,
         "reasons": reasons,
     }

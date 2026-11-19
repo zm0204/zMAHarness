@@ -106,6 +106,19 @@ def parser():
     models.add_argument("--refresh", action="store_true", help="略過偵測快取重新查詢")
     models.add_argument("--all", dest="include_all", action="store_true", help="列出所有未分級模型 ID")
     models.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="本機 TOML 設定檔")
+    route_cmd = groups.add_parser("route", help="出卡前可行性檢查、偵測、額度查詢與選模（唯讀）")
+    route_cmd.add_argument("--repo", type=Path, required=True)
+    route_cmd.add_argument("--task", choices=("review", "second_opinion", "research"), required=True)
+    route_cmd.add_argument("--level", choices=("light", "standard", "deep"), required=True)
+    route_cmd.add_argument("--mode", choices=("bundle", "worktree"), required=True)
+    route_cmd.add_argument("--controller", choices=("codex", "claude", "other"), required=True)
+    route_cmd.add_argument("--override", help="使用者手打指定的模型 ID、key、別名或 effort")
+    route_cmd.add_argument("--effort", help="手打覆寫時指定的思考程度")
+    route_cmd.add_argument("--card-effort", help="卡片原本的思考程度（alias_effort=card 時沿用）")
+    route_cmd.add_argument("--adapter", help="手打覆寫未知模型 ID 時指定的 Adapter")
+    route_cmd.add_argument("--refresh", action="store_true", help="略過偵測與額度快取重新查詢")
+    route_cmd.add_argument("--verbose", action="store_true", help="附加完整偵測、額度與略過理由")
+    route_cmd.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="本機 TOML 設定檔")
     return root
 
 
@@ -299,6 +312,16 @@ def main(argv=None):
     try:
         if args.group == "preflight":
             report = preflight(args.repo, args.adapter, args.config, args.model)
+            output(report)
+            return 0 if report["ok"] else 30
+        if args.group == "route":
+            from .route import route
+
+            report = route(
+                args.repo, task=args.task, level=args.level, mode=args.mode, controller=args.controller,
+                config_path=args.config, override=args.override, effort=args.effort,
+                card_effort=args.card_effort, adapter=args.adapter, refresh=args.refresh, verbose=args.verbose,
+            )
             output(report)
             return 0 if report["ok"] else 30
         config = load_config(args.config)

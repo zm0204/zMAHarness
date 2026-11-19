@@ -125,6 +125,9 @@ EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable, "claude-print": _claud
 # lister(config, executable) -> ListResult(status, ids, efforts, detail); optional account model listing.
 # claude-print uses server-side aliases and intentionally has no lister.
 MODEL_LISTERS = {"agy-print": _agy_print_model_lister, "codex-exec": _codex_exec_model_lister}
+# Supported workspace modes per Adapter (safety property owned by code, not the catalog).
+DEFAULT_WORKSPACE_SUPPORT = frozenset({"bundle", "worktree"})
+WORKSPACE_SUPPORT = {"codex-exec": frozenset({"bundle"})}
 # The preflight reason when the lookup finds nothing; a generic sentence is used otherwise.
 EXECUTABLE_MISSING_REASONS = {
     "claude-print": ("找不到 claude 的原生執行檔（.exe）。zMAHarness 不經由 .cmd、.bat、.ps1 轉呼啟動；"
@@ -154,7 +157,7 @@ def _check_refused_models(value):
 
 
 def register(name, policy, *, factory=None, capture_check=None, capture_reason=None, executable_lookup=None,
-             executable_missing_reason=None, refused_models=None, model_lister=None):
+             executable_missing_reason=None, refused_models=None, model_lister=None, workspace_support=None):
     """Register an Adapter without editing core modules. Names must be new."""
     if name in ADAPTER_POLICIES:
         raise ValueError(f"Adapter is already registered: {name}")
@@ -163,6 +166,9 @@ def register(name, policy, *, factory=None, capture_check=None, capture_reason=N
     # Checked before any table changes, so a malformed entry leaves nothing half-registered.
     if refused_models is not None:
         _check_refused_models(refused_models)
+    if workspace_support is not None:
+        if not isinstance(workspace_support, (set, frozenset)) or not workspace_support <= DEFAULT_WORKSPACE_SUPPORT:
+            raise ValueError("workspace_support must be a subset of {'bundle', 'worktree'}")
     ADAPTER_POLICIES[name] = policy
     if factory is not None:
         ADAPTER_FACTORIES[name] = factory
@@ -178,11 +184,13 @@ def register(name, policy, *, factory=None, capture_check=None, capture_reason=N
         REFUSED_MODELS[name] = refused_models
     if model_lister is not None:
         MODEL_LISTERS[name] = model_lister
+    if workspace_support is not None:
+        WORKSPACE_SUPPORT[name] = frozenset(workspace_support)
 
 
 def unregister(name):
     for table in (ADAPTER_POLICIES, ADAPTER_FACTORIES, CAPTURE_CHECKS, CAPTURE_REASONS, EXECUTABLE_LOOKUPS,
-                  EXECUTABLE_MISSING_REASONS, REFUSED_MODELS, MODEL_LISTERS):
+                  EXECUTABLE_MISSING_REASONS, REFUSED_MODELS, MODEL_LISTERS, WORKSPACE_SUPPORT):
         table.pop(name, None)
 
 
@@ -239,3 +247,7 @@ def executable_missing_reason(name):
 
 def model_lister(name):
     return MODEL_LISTERS.get(name)
+
+
+def workspace_support(name):
+    return WORKSPACE_SUPPORT.get(name, DEFAULT_WORKSPACE_SUPPORT)
