@@ -15,7 +15,7 @@ DEFAULT_POLICY = AdapterPolicy()
 AGY_ORCHESTRATOR_PREFIX = "gemini-pro-orchestrator-"
 AGY_ORCHESTRATOR_REASON = ("agy-print 不接受 Orchestrator 模型 {model}：Orchestrator 會自行派出子代理，"
                            "--settings 的 deny 規則能否約束這些子代理尚未驗證，無法保證唯讀。"
-                           "請改用一般 Gemini 模型（例如 gemini-4-argon-high）。")
+                           "請改用一般 Gemini 模型（例如 gemini-4-neon-high）。")
 
 ADAPTER_POLICIES = {
     "codex-exec": AdapterPolicy(
