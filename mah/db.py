@@ -62,6 +62,13 @@ def connect(database):
     return db
 
 
+def connect_read_only(database):
+    """Open an existing Ledger with SQLite mode=ro: it is never created, migrated or written."""
+    db = sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    return db
+
+
 @contextmanager
 def transaction(database, *, foreign_keys=True):
     with closing(connect(database)) as db, db:

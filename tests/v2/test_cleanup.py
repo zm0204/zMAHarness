@@ -1,5 +1,5 @@
 """mah cleanup and privacy.retain_run_dirs_days (refactor spec 2d). Stand-in Worker only."""
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing as closing_db, redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -352,6 +352,215 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
         self.assertEqual((report["prune"][0]["status"], report["prune"][0]["reason"]),
                          ("不執行", "prunable_outside_worktree_root"))
         self.assertIn(stale.name, self.registered())
+
+    # ---- links, dirty trees and worktrees awaiting dispatch inside Disposable Worktrees ------------------
+    def outside_files(self):
+        outside = self.root / f"outside-{uuid4().hex}"
+        (outside / "nested").mkdir(parents=True)
+        (outside / "important.txt").write_text("must survive", encoding="utf-8")
+        (outside / "nested" / "deep.txt").write_text("must survive too", encoding="utf-8")
+        return outside
+
+    def assert_outside_intact(self, outside):
+        self.assertEqual((outside / "important.txt").read_text(encoding="utf-8"), "must survive")
+        self.assertEqual((outside / "nested" / "deep.txt").read_text(encoding="utf-8"), "must survive too")
+
+    def ignored_junction(self, workspace, outside, *parts):
+        """A junction Git ignores, so git status stays clean and only the link scan can catch it."""
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as file:
+            file.write("ignored-junction\n")
+        parent = workspace.joinpath(*parts)
+        parent.mkdir(parents=True, exist_ok=True)
+        link = parent / "ignored-junction"
+        junction(link, outside)
+        self.addCleanup(lambda: os.path.lexists(link) and os.rmdir(link))
+        return link
+
+    def snapshot_orphan(self):
+        orphan = f"orphan-{uuid4().hex}"
+        (self.repo / "sample.txt").write_text(f"snapshot change {orphan}\n", encoding="utf-8")
+        return Path(prepare_worktree(self.repo, self.trees, orphan)["worktree_path"])
+
+    def orphan_entry(self, report, path):
+        return next(item for item in report["orphan_worktrees"] if item["worktree"] == str(path))
+
+    @unittest.skipUnless(os.name == "nt", "Junctions are a Windows feature")
+    def test_junction_inside_a_failed_run_worktree_is_refused_and_outside_files_survive(self):
+        run_id, workspace, directory = self.make_run("schema", outcome="failed")
+        outside = self.outside_files()
+        link = self.ignored_junction(workspace, outside)
+        self.assertEqual(subprocess.run(["git", "-C", str(workspace), "status", "--porcelain"], check=True,
+                                        capture_output=True, text=True).stdout, "")
+        self.assert_kept(run_id, "worktree_contains_link", directory, workspace, link)
+        self.assert_outside_intact(outside)
+        report = self.clean(apply=True)
+        self.assertEqual((report["summary"]["runs"], report["summary"]["worktrees"]), (0, 0))
+
+    @unittest.skipUnless(os.name == "nt", "Junctions are a Windows feature")
+    def test_junction_deep_inside_an_orphan_worktree_is_refused_and_outside_files_survive(self):
+        path = self.snapshot_orphan()
+        outside = self.outside_files()
+        self.ignored_junction(path, outside, "a", "b", "c")
+        for apply in (False, True):
+            entry = self.orphan_entry(self.clean(apply=apply), path)
+            self.assertEqual((entry["action"], entry["reason"]), ("keep", "worktree_contains_link"))
+        self.assertTrue((path / "sample.txt").is_file())
+        self.assert_outside_intact(outside)
+
+    @unittest.skipUnless(os.name == "nt", "Junctions are a Windows feature")
+    def test_deletion_never_follows_a_junction_that_appears_after_the_scan(self):
+        """The deletion itself refuses links: a junction created between the scan and the delete stops it."""
+        run_id, workspace, directory = self.make_run()
+        path = self.snapshot_orphan()
+        outside = self.outside_files()
+        self.ignored_junction(workspace, outside, "late")
+        self.ignored_junction(path, outside, "late")
+        with patch("mah.cleanup._worktree_refusal", return_value=None):
+            report = self.clean(apply=True)
+        entry = self.entry(report, run_id)
+        self.assertEqual((entry["action"], entry["reason"]), ("keep", "worktree_contains_link"))
+        self.assertNotIn("worktree_removed", entry)
+        self.assertTrue(directory.is_dir())
+        entry = self.orphan_entry(report, path)
+        self.assertEqual((entry["action"], entry["reason"]), ("keep", "worktree_contains_link"))
+        self.assert_outside_intact(outside)
+        self.assertEqual(report["summary"]["worktrees"], 0)
+
+    def test_uncommitted_change_keeps_the_worktree(self):
+        run_id, workspace, directory = self.make_run()
+        (workspace / "sample.txt").write_text("user edit, not committed\n", encoding="utf-8")
+        self.assert_kept(run_id, "worktree_dirty", directory, workspace)
+        self.assertEqual((workspace / "sample.txt").read_text(encoding="utf-8"), "user edit, not committed\n")
+
+    def test_untracked_file_keeps_the_worktree(self):
+        run_id, workspace, directory = self.make_run()
+        (workspace / "notes").mkdir()
+        (workspace / "notes" / "user_notes.txt").write_text("review notes\n", encoding="utf-8")
+        self.assert_kept(run_id, "worktree_dirty", directory, workspace)
+        path = self.snapshot_orphan()
+        (path / "debug.log").write_text("untracked\n", encoding="utf-8")
+        for apply in (False, True):
+            entry = self.orphan_entry(self.clean(apply=apply), path)
+            self.assertEqual((entry["action"], entry["reason"]), ("keep", "worktree_dirty"))
+        self.assertTrue((workspace / "notes" / "user_notes.txt").is_file() and (path / "debug.log").is_file())
+
+    def test_ignored_and_read_only_files_are_deleted_with_a_clean_worktree(self):
+        run_id, workspace, directory = self.make_run()
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(exist_ok=True)
+        exclude.write_text("__pycache__/\n", encoding="utf-8")
+        (workspace / "__pycache__").mkdir()
+        cached = workspace / "__pycache__" / "sample.pyc"
+        cached.write_bytes(b"cache")
+        os.chmod(cached, 0o444)
+        report = self.clean(apply=True)
+        self.assertEqual(self.entry(report, run_id)["action"], "deleted")
+        self.assertFalse(workspace.exists() or directory.exists())
+        self.assertNotIn(str(workspace).replace("\\", "/").lower(), self.registered().lower())
+
+    def scoped_card(self, path):
+        card_id = f"card-{uuid4().hex}"
+        digest = self.ledger.create_card(
+            card_id, repo_root=self.repo, task_key=card_id, trigger_ids=["T5"], prepare_mode="explicit",
+            allowed_templates=["review"], allowed_targets=[{"adapter": self.adapter_name, "model": self.model,
+                                                             "effort_max": "low"}],
+            max_dispatches=1, ttl_minutes=10, timeout_seconds=30, workspace_path=path, task_sha256="0" * 64)
+        return card_id, digest
+
+    def test_orphan_worktree_of_an_open_card_awaits_dispatch(self):
+        path = self.snapshot_orphan()
+        other = self.snapshot_orphan()
+        card_id, _ = self.scoped_card(path)
+        for apply in (False, True):
+            entry = self.orphan_entry(self.clean(apply=apply), path)
+            self.assertEqual((entry["action"], entry["reason"]), ("keep", "awaiting_dispatch"))
+        self.assertTrue(path.is_dir())
+        # Only the worktree the card names is held back.
+        self.assertFalse(other.exists())
+        self.ledger.reject_card(card_id)
+        self.assertEqual(self.orphan_entry(self.clean(apply=True), path)["action"], "deleted")
+        self.assertFalse(path.exists())
+
+    def test_orphan_worktree_of_an_active_grant_awaits_dispatch(self):
+        path = self.snapshot_orphan()
+        card_id, digest = self.scoped_card(path)
+        grant_id = self.ledger.approve(card_id, digest, via="codex_prompt")
+        self.assertEqual(self.ledger.get_card(card_id)["status"], "APPROVED")
+        for apply in (False, True):
+            entry = self.orphan_entry(self.clean(apply=apply), path)
+            self.assertEqual((entry["action"], entry["reason"]), ("keep", "awaiting_dispatch"))
+        self.assertTrue(path.is_dir())
+        self.ledger.close(grant_id)
+        self.assertEqual(self.orphan_entry(self.clean(apply=True), path)["action"], "deleted")
+
+    # ---- report counts, uninspectable paths and the read-only Ledger ----------------------------------
+    def test_removed_worktree_is_counted_when_the_run_directory_fails_to_delete(self):
+        run_id, workspace, directory = self.make_run()
+        with patch("mah.cleanup.shutil.rmtree", side_effect=PermissionError(13, "locked")):
+            report = self.clean(apply=True)
+        entry = self.entry(report, run_id)
+        self.assertEqual((entry["action"], entry["reason"], entry["worktree_removed"]),
+                         ("keep", "delete_failed", True))
+        self.assertFalse(workspace.exists())
+        self.assertTrue(directory.is_dir())
+        self.assertEqual((report["summary"]["runs"], report["summary"]["worktrees"], report["summary"]["kept"]),
+                         (0, 1, 1))
+
+    def test_run_with_only_its_worktree_left_counts_no_run_directory(self):
+        # A snapshot commit verifies the worktree without the Run directory's invocation.json.
+        (self.repo / "sample.txt").write_text("uncommitted change\n", encoding="utf-8")
+        run_id, workspace, directory = self.make_run()
+        shutil.rmtree(directory)
+        listing = self.clean()
+        self.assertIsNone(self.entry(listing, run_id)["run_directory"])
+        self.assertEqual((listing["summary"]["runs"], listing["summary"]["worktrees"]), (0, 1))
+        report = self.clean(apply=True)
+        self.assertEqual(self.entry(report, run_id)["action"], "deleted")
+        self.assertEqual((report["summary"]["runs"], report["summary"]["worktrees"]), (0, 1))
+        self.assertFalse(workspace.exists())
+
+    def test_uninspectable_path_counts_as_a_link_and_cleanup_continues(self):
+        blocked_id, blocked_workspace, blocked_directory = self.make_run()
+        other_id, _, other_directory = self.make_run()
+        real_lstat = os.lstat
+        blocked = blocked_workspace / "sample.txt"
+
+        def lstat(path, *args, **kwargs):
+            if Path(path) == blocked:
+                raise PermissionError(13, "access denied", str(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with patch("mah.cleanup.os.lstat", side_effect=lstat):
+            report = self.clean(apply=True)
+        entry = self.entry(report, blocked_id)
+        self.assertEqual((entry["action"], entry["reason"]), ("keep", "worktree_contains_link"))
+        self.assertTrue(blocked.is_file() and blocked_directory.is_dir())
+        self.assertEqual(self.entry(report, other_id)["action"], "deleted")
+        self.assertFalse(other_directory.exists())
+
+    def test_cleanup_opens_the_ledger_read_only(self):
+        from mah import cleanup as module
+        from mah.db import connect_read_only
+        import sqlite3
+
+        run_id, _, _ = self.make_run()
+        opened = []
+
+        def record(database):
+            opened.append(connect_read_only(database))
+            return opened[-1]
+
+        with patch.object(module, "connect_read_only", side_effect=record):
+            self.assertEqual(self.entry(self.clean(), run_id)["action"], "delete")
+        self.assertEqual(len(opened), 1)
+        with closing_db(connect_read_only(self.ledger.database)) as db:
+            with self.assertRaises(sqlite3.OperationalError):
+                db.execute("UPDATE runs SET state_reason = 'x'")
+        with self.assertRaises(sqlite3.OperationalError):
+            connect_read_only(self.root / "absent.sqlite3").execute("SELECT 1")
+        self.assertFalse((self.root / "absent.sqlite3").exists())
 
 
 class CleanupCommandTests(unittest.TestCase):

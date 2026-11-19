@@ -11,10 +11,19 @@ A Run directory is deleted only when every condition holds; otherwise the report
 - outside_state / link_refused / contains_link: the directory escapes the state directory, is a symbolic
   link or junction, or contains one;
 - worktree_present: the Run still has a worktree that is not verified for removal, or its removal failed;
+- worktree_contains_link: the worktree holds a symbolic link, junction or other reparse point at any depth
+  (ignored files included), or a path in it could not be inspected;
+- worktree_dirty: git status --porcelain=v1 -z --untracked-files=all reports anything in the worktree;
 - delete_failed: deleting the Run directory failed part way (for example a locked file); delete_error holds
   the error and the other entries are still processed.
 
-Listing collects the same repositories as --apply, so the prune entries preview the git worktree prune that
+A Disposable Worktree is never handed to `git worktree remove`: Git for Windows follows a junction inside the
+worktree, with or without --force, and deletes the files it points to. Cleanup deletes the directory itself
+without following any link (stopping as soon as it meets one) and leaves the stale registration to the
+guarded `git worktree prune` below. An orphan worktree (no Run row) that an open card or a live Grant still
+names is kept as awaiting_dispatch.
+
+The Ledger is opened read-only (SQLite mode=ro). Listing collects the same repositories as --apply, so the prune entries preview the git worktree prune that
 --apply would run (status "將執行") without running it.
 """
 from contextlib import closing
@@ -29,7 +38,7 @@ import stat
 from types import SimpleNamespace
 
 from .context_bundle import _git, _git_path, _head
-from .db import connect
+from .db import connect_read_only
 from .ledger import RUN_ID, TERMINAL_STATES, LedgerError, timestamp, utc_now, valid_id
 from .run_manager import RunManager, _read
 
@@ -44,22 +53,70 @@ def _is_link(path):
         info = os.lstat(path)
     except FileNotFoundError:
         return False
+    except OSError:
+        # PermissionError and the like: what the path is cannot be told, so it is refused like a link.
+        return True
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
 
 
 def _scan(directory):
-    """(bytes, contains_link) without following any link."""
+    """(bytes, contains_link) without following any link. A directory that cannot be listed or an entry
+    that cannot be inspected counts as a link, because what it holds is unknown."""
     size, linked = 0, False
-    for root, directories, files in os.walk(directory, followlinks=False):
+
+    def unreadable(error):
+        nonlocal linked
+        linked = True
+
+    for root, directories, files in os.walk(directory, onerror=unreadable, followlinks=False):
         for name in directories + files:
             path = os.path.join(root, name)
             if _is_link(path):
                 linked = True
                 continue
             if name in files:
-                size += os.lstat(path).st_size
+                try:
+                    size += os.lstat(path).st_size
+                except OSError:
+                    linked = True
         directories[:] = [name for name in directories if not _is_link(os.path.join(root, name))]
     return size, linked
+
+
+class _LinkFound(OSError):
+    pass
+
+
+def _delete_tree(path):
+    """Delete path bottom-up without following any link; raise _LinkFound on meeting one."""
+    if _is_link(path):
+        raise _LinkFound(f"link inside the worktree: {path}")
+    with os.scandir(path) as listing:
+        # .git goes last, so a deletion stopped part way still leaves a worktree Git recognizes.
+        children = sorted((entry.path for entry in listing), key=lambda child: os.path.basename(child) == ".git")
+    for child in children:
+        if _is_link(child):
+            raise _LinkFound(f"link inside the worktree: {child}")
+        info = os.lstat(child)
+        if stat.S_ISDIR(info.st_mode):
+            _delete_tree(child)
+            continue
+        if not info.st_mode & stat.S_IWRITE:
+            os.chmod(child, stat.S_IWRITE | stat.S_IREAD)
+        os.unlink(child)
+    os.rmdir(path)
+
+
+def _worktree_refusal(path):
+    """None when the worktree may be deleted, otherwise the reason to keep it. The link scan runs first,
+    so git status never walks a tree that holds a link."""
+    if _is_link(path) or _scan(path)[1]:
+        return "worktree_contains_link"
+    try:
+        status = _git(path, "status", "--porcelain=v1", "-z", "--untracked-files=all", timeout=60)
+    except (OSError, ValueError):
+        return "worktree_dirty"
+    return "worktree_dirty" if status else None
 
 
 def _same_path(left, right):
@@ -95,9 +152,11 @@ def _launch_baseline(directory):
 
 
 def _remove_worktree(repo, path):
+    """Delete the worktree directory without following links. The registration it leaves behind becomes
+    prunable and goes with the guarded git worktree prune (prune_entries). True when the directory is gone."""
     try:
-        _git(repo, "worktree", "remove", "--force", "--", str(path), timeout=60)
-    except (OSError, ValueError):
+        _delete_tree(path)
+    except OSError:
         pass
     return not os.path.lexists(path)
 
@@ -133,6 +192,36 @@ class Cleanup:
         self.cutoff = timestamp(self.now - timedelta(days=self.days))
         self.worktree_root = config.values["paths"]["worktree_root"].resolve()
         self.repos = {}
+        self.removing = {}  # repo key -> worktrees this cleanup deletes (or would delete when listing)
+        self.awaiting = (set(), set())  # bound workspace paths; repos of unscoped open cards or live Grants
+
+    def remove(self, repo, path):
+        self.repos.setdefault(normcase(str(repo)), repo)
+        self.removing.setdefault(normcase(str(repo)), []).append(path)
+
+    def awaits_dispatch(self, path, repo):
+        paths, repos = self.awaiting
+        return (normcase(str(path.resolve())) in paths
+                or (repo is not None and normcase(str(repo.resolve())) in repos))
+
+    def load_awaiting(self, db):
+        """Worktrees an open card or a live Grant may still dispatch to. A card or Grant without a bound
+        workspace_path could target any worktree of its repository, so the whole repository counts."""
+        paths, repos = self.awaiting
+        rows = [*db.execute("SELECT repo_root, content_json AS scope FROM cards WHERE status = 'PROPOSED'"),
+                *db.execute("""SELECT repo_root, dispatch_scope_json AS scope FROM grants
+                               WHERE status = 'ACTIVE' AND expires_at > ? AND used_dispatches < max_dispatches""",
+                            (timestamp(self.now),))]
+        for row in rows:
+            try:
+                scope = json.loads(row["scope"]) if row["scope"] else {}
+            except ValueError:
+                scope = {}
+            workspace = scope.get("workspace_path") if isinstance(scope, dict) else None
+            if isinstance(workspace, str) and workspace:
+                paths.add(normcase(str(Path(workspace).resolve())))
+            else:
+                repos.add(normcase(str(Path(row["repo_root"]).resolve())))
 
     def expired(self, finished_at):
         # Ledger timestamps share one ISO format in UTC, so they compare as text.
@@ -175,10 +264,17 @@ class Cleanup:
                     and _snapshot_verified(workspace, run_id, _launch_baseline(directory))):
                 reason = "worktree_present"
             else:
-                self.repos.setdefault(normcase(str(repo)), repo)
-                if self.apply and not _remove_worktree(repo, workspace):
-                    reason = "worktree_present"
-                    entry["worktree_error"] = "git worktree remove failed"
+                reason = _worktree_refusal(workspace)
+            if reason is None and self.apply:
+                # Checked again right before the irreversible step.
+                reason = _worktree_refusal(workspace)
+                if reason is None and not _remove_worktree(repo, workspace):
+                    reason = "worktree_contains_link" if _scan(workspace)[1] else "worktree_present"
+                    entry["worktree_error"] = "deleting the worktree directory failed"
+                if reason is None:
+                    entry["worktree_removed"] = True
+            if reason is None:
+                self.remove(repo, workspace)
         if reason is not None:
             return entry | {"action": "keep", "reason": reason}
         if self.apply and has_directory:
@@ -199,7 +295,11 @@ class Cleanup:
             name = path.name
             if not valid_id(RUN_ID, name) or name in known or _is_link(path) or not path.is_dir():
                 continue
-            modified = timestamp(datetime.fromtimestamp(path.stat().st_mtime, self.now.tzinfo))
+            try:
+                modified = timestamp(datetime.fromtimestamp(path.stat().st_mtime, self.now.tzinfo))
+            except OSError:
+                entries.append({"worktree": str(path), "action": "keep", "reason": "worktree_contains_link"})
+                continue
             entry = {"worktree": str(path), "modified_at": modified}
             repo = None
             try:
@@ -207,19 +307,26 @@ class Cleanup:
                     repo = _git_path(path, "--git-common-dir").parent
             except (OSError, ValueError):
                 repo = None
-            if not self.expired(modified):
-                entries.append(entry | {"action": "keep", "reason": "not_expired"})
+            if self.awaits_dispatch(path, repo):
+                reason = "awaiting_dispatch"
+            elif not self.expired(modified):
+                reason = "not_expired"
             elif (repo is None or not _linked_worktree_of(path, repo)
                   or not _snapshot_verified(path, name, None)):
-                entries.append(entry | {"action": "keep", "reason": "snapshot_unverified"})
-            elif not self.apply:
-                self.repos.setdefault(normcase(str(repo)), repo)
-                entries.append(entry | {"action": "delete", "repo": str(repo)})
+                reason = "snapshot_unverified"
             else:
-                self.repos.setdefault(normcase(str(repo)), repo)
-                removed = _remove_worktree(repo, path)
-                entries.append(entry | {"action": "deleted" if removed else "keep", "repo": str(repo)}
-                               | ({} if removed else {"reason": "git worktree remove failed"}))
+                reason = _worktree_refusal(path)
+            if reason is None and self.apply:
+                # Checked again right before the irreversible step.
+                reason = _worktree_refusal(path)
+                if reason is None and not _remove_worktree(repo, path):
+                    reason = "worktree_contains_link" if _scan(path)[1] else "delete_failed"
+            if reason is not None:
+                entries.append(entry | {"action": "keep", "reason": reason}
+                               | ({"repo": str(repo)} if repo is not None else {}))
+                continue
+            self.remove(repo, path)
+            entries.append(entry | {"action": "deleted" if self.apply else "delete", "repo": str(repo)})
         return entries
 
     def prune_entries(self):
@@ -232,6 +339,10 @@ class Cleanup:
             except (OSError, ValueError):
                 entries.append({"repo": str(repo), "pruned": False, "reason": "worktree_list_failed"})
                 continue
+            # A listing also previews the registrations its deletions would leave prunable.
+            listed = {normcase(str(Path(item).resolve())) for item in prunable if item}
+            prunable += [str(path) for path in self.removing.get(normcase(str(repo)), [])
+                         if normcase(str(path.resolve())) not in listed]
             if not prunable:
                 continue
             ours = all(item and Path(item).resolve().is_relative_to(self.worktree_root) for item in prunable)
@@ -252,8 +363,9 @@ class Cleanup:
     def run(self):
         runs = []
         if self.manager is not None:
-            with closing(connect(self.manager.database)) as db:
+            with closing(connect_read_only(self.manager.database)) as db:
                 runs = db.execute("SELECT * FROM runs ORDER BY created_at, run_id").fetchall()
+                self.load_awaiting(db)
         entries = [entry for entry in (self.run_entry(run) for run in runs) if entry is not None]
         orphans = self.orphan_entries({run["run_id"] for run in runs})
         report = {
@@ -261,9 +373,17 @@ class Cleanup:
             "runs": entries, "orphan_worktrees": orphans, "prune": self.prune_entries(),
         }
         action = "deleted" if self.apply else "delete"
+
+        def worktree_removed(entry):
+            # A Run's worktree can be gone although its directory was kept (delete_failed).
+            if self.apply:
+                return entry.get("worktree_removed", False)
+            return entry["action"] == action and entry.get("worktree") is not None
+
         report["summary"] = {
-            "runs": sum(entry["action"] == action for entry in entries),
-            "worktrees": sum(entry["action"] == action and entry.get("worktree") is not None for entry in entries)
+            # A Run whose directory was already gone removes only its worktree.
+            "runs": sum(entry["action"] == action and entry.get("run_directory") is not None for entry in entries),
+            "worktrees": sum(worktree_removed(entry) for entry in entries)
             + sum(entry["action"] == action for entry in orphans),
             "bytes": sum(entry.get("bytes", 0) for entry in entries if entry["action"] == action),
             "kept": sum(entry["action"] == "keep" for entry in entries + orphans),
