@@ -102,6 +102,10 @@ def parser():
     cleanup = groups.add_parser("cleanup", help="列出（預設）或刪除過期的 Run 目錄與 Disposable Worktree")
     cleanup.add_argument("--older-than-days", type=int, help="預設為 privacy.retain_run_dirs_days")
     cleanup.add_argument("--apply", action="store_true", help="實際刪除；未指定時只列出，不寫入任何東西")
+    models = groups.add_parser("models", help="列出模型目錄與帳號偵測結果（唯讀）")
+    models.add_argument("--refresh", action="store_true", help="略過偵測快取重新查詢")
+    models.add_argument("--all", dest="include_all", action="store_true", help="列出所有未分級模型 ID")
+    models.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="本機 TOML 設定檔")
     return root
 
 
@@ -323,6 +327,11 @@ def main(argv=None):
 
             output(cleanup(read_only_manager(config), config, older_than_days=args.older_than_days,
                            apply=args.apply))
+            return 0
+        if args.group == "models":
+            from .model_detect import models_report
+
+            output(models_report(config, refresh=args.refresh, include_all=args.include_all))
             return 0
         config.database.parent.mkdir(parents=True, exist_ok=True)
         ledger = GrantLedger(config.database, limits=config.ledger_limits)

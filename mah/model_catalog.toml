@@ -1,0 +1,282 @@
+# zMAHarness 模型目錄。由維護者管理；程式只讀。
+# 規則：表裡沒有的模型一律「未分級」，可手動指定，但不會自動推薦。不要讓程式或 AI 猜等級。
+# 目錄只影響推薦，不影響授權：card create／dispatch 不讀這個檔；Orchestrator 由 registry 硬性拒絕。
+schema_version = 1
+updated = "2026-11-19"
+tested_cli = { agy = "1.5.12", codex = "0.169.0", claude = "2.1.325" }
+
+[routing]
+tight_percent = 90
+detect_ttl_hours = 12
+quota_ttl_minutes = 10
+agy_unknown_cooldown_minutes = 60
+agy_cooldown_horizon_days = 8
+
+# ───────────── Gemini（agy-print） ─────────────
+[[models]]
+key = "gemini-3.8-flash"
+display = "Gemini 3.8 Flash"
+family = "gemini"
+status = "recommended"
+cost = "economy"
+billing = "subscription"
+efforts = ["low", "medium", "high"]
+aliases = ["flash"]
+routes = [{ adapter = "agy-print", id = "gemini-3.8-flash-{effort}", quota = "agy:gemini" }]
+note = "T3 大量整理與小型常規檢查；省額度備選。2026-11-19 重構後真實派工通過（flash-low）。"
+
+[[models]]
+key = "gemini-4-neon"
+display = "Gemini 4 Neon"
+family = "gemini"
+status = "recommended"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]   # xhigh 需本機 limits.max_effort 調高
+aliases = ["neon", "4neon"]
+alias_effort = "high"
+routes = [{ adapter = "agy-print", id = "gemini-4-neon-{effort}", quota = "agy:gemini" }]
+note = "Gemini 審查的預設（2026-11-19 作者決定）。agy-print 真實派工 SUCCEEDED／ACCEPTED。"
+
+[[models]]
+key = "gemini-4-argon"
+display = "Gemini 4 Argon"
+family = "gemini"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high"]
+aliases = ["argon", "4argon"]
+alias_effort = "high"
+routes = [{ adapter = "agy-print", id = "gemini-4-argon-{effort}", quota = "agy:gemini" }]
+
+[[models]]
+key = "gemini-4-hydrogen"
+display = "Gemini 4 Hydrogen"
+family = "gemini"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+aliases = ["hydrogen", "4hydrogen"]
+alias_effort = "high"
+routes = [{ adapter = "agy-print", id = "gemini-4-hydrogen-{effort}", quota = "agy:gemini" }]
+
+[[models]]
+key = "gemini-pro-orchestrator"
+display = "Orchestrator"
+family = "gemini"
+status = "refused"
+billing = "subscription"
+routes = [{ adapter = "agy-print", prefix = "gemini-pro-orchestrator-", quota = "agy:gemini" }]
+note = "會自行派出子代理，deny 規則能否約束子代理未驗證。拒絕由 registry 執行，這裡只讓 mah models 顯示為 refused。"
+
+# ───────────── Claude ─────────────
+# claude-print 用別名，CLI 自動對應到最新版本；claude-print 不可用時改走 agy-print 的固定 ID。
+[[models]]
+key = "claude-sonnet"
+display = "Claude Sonnet"
+family = "claude"
+status = "recommended"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high"]
+aliases = ["sonnet"]
+routes = [
+  { adapter = "claude-print", id = "sonnet", quota = "claude" },
+  { adapter = "agy-print", id = "claude-sonnet-5-5-{effort}", quota = "agy:claude" },
+]
+
+[[models]]
+key = "claude-opus"
+display = "Claude Opus"
+family = "claude"
+status = "recommended"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high"]
+aliases = ["opus"]
+routes = [
+  { adapter = "claude-print", id = "opus", quota = "claude" },
+  { adapter = "agy-print", id = "claude-opus-5-5-{effort}", quota = "agy:claude" },
+]
+
+# ───────────── GPT（codex-exec，只支援 Context-Bundle） ─────────────
+[[models]]
+key = "gpt-6.1-terra"
+display = "GPT 6.1 Terra"
+family = "gpt"
+status = "recommended"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+aliases = ["terra"]
+routes = [{ adapter = "codex-exec", id = "gpt-6.1-terra", quota = "chatgpt" }]
+note = "GPT 的預設建議；真實 smoke 五項工具探測都被擋下。"
+
+[[models]]
+key = "gpt-6.2-sol"
+display = "GPT 6.2 Sol"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-6.2-sol", quota = "chatgpt" }]
+note = "2026-11-19 low～xhigh 探測通過、真實派工 SUCCEEDED／ACCEPTED（low）。"
+
+[[models]]
+key = "gpt-6.2-astra"
+display = "GPT 6.2 Astra"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+aliases = ["astra"]
+routes = [{ adapter = "codex-exec", id = "gpt-6.2-astra", quota = "chatgpt" }]
+
+# 以下為 0.169.0 探測通過、只能手動指定的型號。
+[[models]]
+key = "gpt-6.1-sol"
+display = "GPT 6.1 Sol"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-6.1-sol", quota = "chatgpt" }]
+note = "中繼資料可能宣告 send_message_to_user_async（EXPLAINED_TOOLS），每次派工重新探測。"
+
+[[models]]
+key = "gpt-6-astra"
+display = "GPT 6 Astra"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-6-astra", quota = "chatgpt" }]
+
+[[models]]
+key = "gpt-6-sol"
+display = "GPT 6 Sol"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-6-sol", quota = "chatgpt" }]
+
+[[models]]
+key = "gpt-6-luna"
+display = "GPT 6 Luna"
+family = "gpt"
+status = "recommended"   # 附錄 C D7：納入 option3.save 作為非 Gemini 的省額度備選
+cost = "economy"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+aliases = ["luna"]
+routes = [{ adapter = "codex-exec", id = "gpt-6-luna", quota = "chatgpt" }]
+
+[[models]]
+key = "gpt-5.6-sol"
+display = "GPT 5.6 Sol"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-5.6-sol", quota = "chatgpt" }]
+
+[[models]]
+key = "gpt-5.6-terra"
+display = "GPT 5.6 Terra"
+family = "gpt"
+status = "selectable"
+cost = "premium"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-5.6-terra", quota = "chatgpt" }]
+note = "3b 真實派工 SUCCEEDED／ACCEPTED（medium）。"
+
+[[models]]
+key = "gpt-5.6-luna"
+display = "GPT 5.6 Luna"
+family = "gpt"
+status = "selectable"
+cost = "economy"
+billing = "subscription"
+efforts = ["low", "medium", "high", "xhigh"]
+routes = [{ adapter = "codex-exec", id = "gpt-5.6-luna", quota = "chatgpt" }]
+
+# ───────────── 任務 × 等級 ─────────────
+# 第一個通過篩選的候選就是選項 2。後面的候選只在前面的被排除（主控同家族、模式不支援、
+# 帳號沒有、額度用完或冷卻中）時才會用到；標「額度備援」的是 3d 新增、原 SKILL 沒有的候選。
+
+[[cells]]
+task = "review"
+level = "light"        # 小型常規檢查
+picks = [
+  { model = "gemini-3.8-flash", effort = "low" },
+  { model = "claude-sonnet", effort = "low" },       # 額度備援
+  { model = "gpt-6.1-terra", effort = "low" },       # 額度備援（Codex 主控會被排除）
+]
+
+[[cells]]
+task = "review"
+level = "standard"     # T2 核心邏輯／跨模組高風險 Review
+picks = [
+  # 只有非 GPT 主控（例如 Claude Code）且 Context-Bundle 時會選到；選項 3 照原 SKILL 用 Neon High。
+  { model = "gpt-6.1-terra", effort = "medium", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
+  { model = "gemini-4-neon", effort = "medium" },
+  { model = "claude-sonnet", effort = "medium" },    # 額度備援
+]
+
+[[cells]]
+task = "review"
+level = "deep"         # T2 跨模組交互複雜
+picks = [
+  { model = "gpt-6.1-terra", effort = "medium", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
+  { model = "gemini-4-neon", effort = "high" },
+  { model = "claude-opus", effort = "high" },        # 額度備援
+]
+
+[[cells]]
+task = "second_opinion"
+level = "deep"         # T1 連續修復失敗；異質視角深度推理
+picks = [
+  { model = "gpt-6.1-terra", effort = "high", option3 = [{ model = "gemini-4-neon", effort = "high" }] },
+  { model = "gemini-4-neon", effort = "high" },
+  { model = "claude-opus", effort = "high" },
+  { model = "claude-sonnet", effort = "high" },
+]
+
+[[cells]]
+task = "research"
+level = "light"        # T3 大量資料整理
+picks = [
+  { model = "gemini-3.8-flash", effort = "low" },
+  { model = "claude-sonnet", effort = "low" },       # 額度備援
+  { model = "gpt-6.1-terra", effort = "low" },       # 額度備援
+]
+
+[[cells]]
+task = "research"
+level = "standard"     # 需要整合較多線索
+picks = [
+  { model = "gemini-3.8-flash", effort = "medium" },
+  { model = "claude-sonnet", effort = "medium" },    # 額度備援
+  { model = "gpt-6.1-terra", effort = "medium" },    # 額度備援
+]
+
+# ───────────── 選項 3 ─────────────
+[option3]
+# 選項 2 是 premium 時（附錄 C D7：含非 Gemini 省額度備選）
+save = [
+  { model = "gemini-3.8-flash", effort = "low" },
+  { model = "claude-sonnet", effort = "low" },
+  { model = "gpt-6-luna", effort = "low" },
+]
+# 選項 2 是 economy 時
+upgrade = [{ model = "gemini-4-neon", effort = "high" }]

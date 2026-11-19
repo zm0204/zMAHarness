@@ -1,0 +1,33 @@
+# 選用的本機模型覆寫範本。需要自訂模型分級或路由參數時，將本檔複製為：
+#   <zMAHarness 設定目錄>/models.local.toml（與 harness.local.toml 同目錄）
+# 例如 Windows 預設：%LOCALAPPDATA%/zMAHarness/models.local.toml
+# 本檔不存在是正常情況；若本機覆寫檔語法或格式有誤，zMAHarness 會整份忽略並退回內建目錄，不擋派工。
+# 不可取代內建目錄中 status = "refused" 的模型；但可以把任何模型設為 refused。
+
+schema_version = 1
+
+# [routing]
+# tight_percent = 90
+# detect_ttl_hours = 12
+# quota_ttl_minutes = 10
+# agy_unknown_cooldown_minutes = 60
+# agy_cooldown_horizon_days = 8
+
+# 範例：替 agy 新出現的未分級模型分級，並讓它在 T3 當額度備援。
+# [[models]]
+# key = "gpt-oss-120b"
+# display = "GPT-OSS 120B（agy）"
+# family = "gpt-oss"
+# status = "recommended"
+# cost = "economy"
+# billing = "subscription"
+# efforts = ["medium"]
+# routes = [{ adapter = "agy-print", id = "gpt-oss-120b-{effort}", quota = "agy:gpt-oss" }]
+#
+# [[cells]]
+# task = "research"
+# level = "light"
+# picks = [
+#   { model = "gemini-3.8-flash", effort = "low" },
+#   { model = "gpt-oss-120b", effort = "medium" },
+# ]

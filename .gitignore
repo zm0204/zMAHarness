@@ -111,3 +111,11 @@
 !/tests/v2/test_card_snapshot_head.py
 !/mah/cleanup.py
 !/tests/v2/test_cleanup.py
+!/mah/model_catalog.toml
+!/mah/catalog.py
+!/mah/model_detect.py
+!/models.local.example.toml
+!/tests/v2/test_model_catalog.py
+!/tests/v2/test_model_detect.py
+!/tests/v2/fixtures/model_catalog/
+!/tests/v2/fixtures/model_catalog/**

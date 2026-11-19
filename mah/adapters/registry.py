@@ -91,6 +91,18 @@ def _codex_exec_executable(config):
     return CodexExecAdapter.from_config(None, config).find_executable()
 
 
+def _agy_print_model_lister(config, executable):
+    from ..model_detect import list_agy_models
+
+    return list_agy_models(config, executable)
+
+
+def _codex_exec_model_lister(config, executable):
+    from ..model_detect import list_codex_models
+
+    return list_codex_models(config, executable)
+
+
 # factory(manager, config) -> an object implementing mah.adapters.base.Adapter
 ADAPTER_FACTORIES = {"agy-print": _agy_print_factory, "claude-print": _claude_print_factory,
                      "codex-exec": _codex_exec_factory}
@@ -110,6 +122,9 @@ REASON_PLACEHOLDER = re.compile(r"\{(adapter|model)\}")
 # lookup(config) -> resolved path or None; optional read-only Worker executable check for preflight.
 EXECUTABLE_LOOKUPS = {"agy-print": _agy_print_executable, "claude-print": _claude_print_executable,
                       "codex-exec": _codex_exec_executable}
+# lister(config, executable) -> ListResult(status, ids, efforts, detail); optional account model listing.
+# claude-print uses server-side aliases and intentionally has no lister.
+MODEL_LISTERS = {"agy-print": _agy_print_model_lister, "codex-exec": _codex_exec_model_lister}
 # The preflight reason when the lookup finds nothing; a generic sentence is used otherwise.
 EXECUTABLE_MISSING_REASONS = {
     "claude-print": ("找不到 claude 的原生執行檔（.exe）。zMAHarness 不經由 .cmd、.bat、.ps1 轉呼啟動；"
@@ -139,7 +154,7 @@ def _check_refused_models(value):
 
 
 def register(name, policy, *, factory=None, capture_check=None, capture_reason=None, executable_lookup=None,
-             executable_missing_reason=None, refused_models=None):
+             executable_missing_reason=None, refused_models=None, model_lister=None):
     """Register an Adapter without editing core modules. Names must be new."""
     if name in ADAPTER_POLICIES:
         raise ValueError(f"Adapter is already registered: {name}")
@@ -161,11 +176,13 @@ def register(name, policy, *, factory=None, capture_check=None, capture_reason=N
         EXECUTABLE_MISSING_REASONS[name] = executable_missing_reason
     if refused_models is not None:
         REFUSED_MODELS[name] = refused_models
+    if model_lister is not None:
+        MODEL_LISTERS[name] = model_lister
 
 
 def unregister(name):
     for table in (ADAPTER_POLICIES, ADAPTER_FACTORIES, CAPTURE_CHECKS, CAPTURE_REASONS, EXECUTABLE_LOOKUPS,
-                  EXECUTABLE_MISSING_REASONS, REFUSED_MODELS):
+                  EXECUTABLE_MISSING_REASONS, REFUSED_MODELS, MODEL_LISTERS):
         table.pop(name, None)
 
 
@@ -218,3 +235,7 @@ def executable_lookup(name):
 
 def executable_missing_reason(name):
     return EXECUTABLE_MISSING_REASONS.get(name)
+
+
+def model_lister(name):
+    return MODEL_LISTERS.get(name)
