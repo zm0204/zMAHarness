@@ -17,6 +17,12 @@ from .ledger import (READ_ONLY_TEMPLATES, BUSY_QUERY, RUN_ID, SHA256, SNAPSHOT_H
 from .process_identity import probe_process
 
 RESULT_STATES = {"RUNNING", "TIMED_OUT", "SUBMISSION_UNKNOWN", "COLLECTING"}
+# States a resolve call may recover a Worker result from; that result takes priority over the action.
+RECOVERABLE_STATES = ("SUBMISSION_UNKNOWN", "TIMED_OUT")
+RECOVERED_NOTICE = ("已救回結果，Run 停在 COLLECTING 等待驗收（mah verify）；這次沒有標記失敗或放棄。"
+                    "需要的話再執行一次 mah resolve {run_id} --mark-failed --reason \"<原因>\"")
+COLLECTING_ABANDON_NOTICE = ("Run 已有 Worker 結果，處於 COLLECTING，--abandon 不適用，狀態沒有改變。"
+                             "請以 mah verify 驗收，或執行 mah resolve {run_id} --mark-failed --reason \"<原因>\"")
 
 
 def _read(path):
@@ -442,11 +448,16 @@ class RunManager:
         return self._change(db, run, "FAILED", reason="user_marked_failed",
                             evidence={"from_state": "COLLECTING", "user_reason": reason} | extra)
 
-    def resolve(self, run_id, *, action=None, reason=None, saved_evidence_error=None):
+    def resolve(self, run_id, *, action=None, reason=None, saved_evidence_error=None, state_before_collect=None):
         """Apply a user resolution.
 
         `saved_evidence_error` records why the sealed Worker evidence could not be recovered. Only the
         closing actions accept it, and they still end in FAILED or ABANDONED without refunding the Grant.
+
+        `state_before_collect` is the state the caller read before it ran the Adapter's collect_saved. When
+        that call recovered the Run from SUBMISSION_UNKNOWN or TIMED_OUT into COLLECTING, the recovery
+        belongs to this resolution, so the recovered result takes priority exactly as when this method
+        reconciles it itself.
         """
         with transaction(self.database) as db:
             run = self._run(db, run_id)
@@ -464,7 +475,10 @@ class RunManager:
             # unless the sealed Worker evidence is damaged: that result can never be collected, so the
             # closing action ends the Run in this same call and keeps the error.
             previous_state = run["state"]
+            if previous_state == "COLLECTING" and state_before_collect in RECOVERABLE_STATES:
+                previous_state = state_before_collect
             run = self._reconcile(db, run, resume_observation=action is None)
+            recovered = previous_state in RECOVERABLE_STATES and run["state"] == "COLLECTING"
             if action == "mark_failed" and previous_state == "COLLECTING" and run["state"] == "COLLECTING":
                 return self._summary(db, self._mark_collecting_failed(db, run, reason, extra))
             if (action == "mark_failed" and saved_evidence_error is not None and run["state"] == "COLLECTING"
@@ -476,8 +490,24 @@ class RunManager:
                             | ({"user_reason": reason} if reason is not None else {}) | extra)
                 return self._summary(db, self._change(db, run, "FAILED", reason="user_marked_failed",
                                                       evidence=evidence))
+            if action == "abandon" and run["state"] == "COLLECTING" and saved_evidence_error is not None:
+                # The Worker left a result (DONE), so the Run is no longer abandonable, and the damaged sealed
+                # evidence means that result can never be collected. Say so instead of stopping in COLLECTING
+                # with exit code 0.
+                raise LedgerError(20, "這個 Run 已有 Worker 結果（DONE），處於 COLLECTING，不能 --abandon；封存證據損毀，"
+                                      f"結果無法驗收（{_truncate_error(saved_evidence_error)}）。請改用 mah resolve "
+                                      f"{run_id} --mark-failed --reason \"<原因>\" 收尾")
             if action is not None and run["state"] == "COLLECTING" and self._completion(run)[0] == "verified":
-                return self._summary(db, run)
+                summary = self._summary(db, run)
+                if recovered:
+                    summary["resolution_notice"] = RECOVERED_NOTICE.format(run_id=run_id)
+                elif action == "abandon":
+                    summary["resolution_notice"] = COLLECTING_ABANDON_NOTICE.format(run_id=run_id)
+                return summary
+            if action == "mark_failed" and recovered:
+                # Recovered into COLLECTING without an acceptable result: nothing to give priority to.
+                return self._summary(db, self._mark_collecting_failed(db, run, reason, extra | {
+                    "recovered_from": previous_state}))
             if action == "mark_failed" and run["state"] in ("SUBMISSION_UNKNOWN", "TIMED_OUT"):
                 evidence = ({"user_reason": reason} if reason is not None else {}) | extra
                 run = self._change(db, run, "FAILED", reason="user_marked_failed", evidence=evidence or None)

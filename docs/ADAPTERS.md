@@ -98,7 +98,14 @@ Worker 的輸出只留在 `<prefix>.stdout.pending`、`<prefix>.stderr.pending`�
 
 補封存的收據是 `termination="interrupted"`、`exit_code` 與 `wall_milliseconds` 為 null，並帶 `"recovered": "pending"`（只有這條路徑才有這個鍵）；
 工作目錄會重新快照，agy 照常擷取 CLI log 的送出證據。之後照一般流程收集：只有 stdout 是完整的成功 envelope、結構化結果通過 schema 與一致性檢查時，
-才進 `COLLECTING`（原因 `recovered_result_collected`），成功仍由 Verifier 判定；其他情況維持 `SUBMISSION_UNKNOWN`。整條路徑不會啟動任何程序。
+才進 `COLLECTING`（原因 `recovered_result_collected`），成功仍由 Verifier 判定。補封存的收據和一般收據走同一套 fail-closed 判定，下列情況會先結束或改判，不會停在 `SUBMISSION_UNKNOWN`：
+
+- 必要動作被拒絕或失敗（`required_action_denied`、`required_action_failed`）、唯讀工作目錄被改動（`readonly_violation`）時進 `FAILED`；
+- agy 的 CLI log 留有送出證據（`log_submission`）時進 `TIMED_OUT`（`process_timed_out`），和逾時一樣不退回 Grant；
+- codex-exec 救回的結果若 JSONL 出現工具類 item（`codex_tool_item_observed`）或 `-o` 檔與最後一則 agent message 不一致（`structured_output_conflict`），進 `FAILED`。
+
+找不到任何送出證據時是 `SUBMISSION_UNKNOWN`（`submission_evidence_missing`），輸出不完整或不是成功 envelope 時是 `SUBMISSION_UNKNOWN`（`process_completion_unknown`）。整條路徑不會啟動任何程序。
+用 `mah resolve <run_id> --mark-failed` 處理這種 Run 時，若同一次呼叫的 `collect_saved` 剛救回可驗收的結果，結果優先：Run 停在 `COLLECTING` 並在輸出加上 `resolution_notice`，不會在同一次呼叫標記失敗；確定不要這份結果，再執行一次 `--mark-failed --reason`。
 
 ### codex-exec
 

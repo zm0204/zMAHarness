@@ -4,9 +4,10 @@ mah's death is simulated by an observe() that waits for the stand-in Worker and 
 so neither observe nor persist_capture finishes. Recovery runs with Popen replaced by a stub that fails the
 test: no step may start a process.
 """
-from contextlib import closing
+from contextlib import closing, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from hashlib import sha256
+import io
 import json
 import os
 from pathlib import Path
@@ -19,8 +20,10 @@ from mah.adapters import registry
 from mah.adapters.agy_print import AgyCapture
 from mah.adapters.base import AdapterPolicy
 from mah.adapters.cli_worker import CliCapture, check_recovered
+from mah.cli import main
 from mah.ledger import LedgerError
 from mah.process_identity import probe_process
+from mah.run_manager import RunManager
 
 import test_agy_process
 from test_cli_worker import WorkerFixture
@@ -146,6 +149,49 @@ class PendingRecoveryTests(WorkerFixture, unittest.TestCase):
         view = self.recover()
         self.assertEqual((view["state"], view["state_reason"]), ("COLLECTING", "recovered_result_collected"))
         self.assertEqual(self.verify()["state"], "SUCCEEDED")
+
+    def resolve_cli(self, *args):
+        """mah resolve in this process, with this fixture's Adapter standing in for the registered one."""
+        config = self.root / "harness.local.toml"
+        config.write_text("[paths]\nstate_dir = " + json.dumps(str(self.state)) + "\nworktree_root = "
+                          + json.dumps(str(self.trees)) + "\n", encoding="utf-8")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with NoLaunch(), patch("mah.cli.has_factory", return_value=True), \
+                patch("mah.cli.create_adapter", return_value=self.adapter), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["--config", str(config), "resolve", self.run_id, *args])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def assert_recovered_result_takes_priority(self):
+        code, out, err = self.resolve_cli("--mark-failed", "--reason", "thought it died")
+        self.assertEqual(code, 0, err)
+        view = json.loads(out)
+        self.assertEqual((view["state"], view["state_reason"], view["completion_evidence"]),
+                         ("COLLECTING", "recovered_result_collected", "verified"))
+        self.assertIn("已救回結果", view["resolution_notice"])
+        self.assertIn("--mark-failed", err)
+        self.assertEqual(self.ledger.get_grant(self.grant_id)["used_dispatches"], 1)
+
+    def test_mark_failed_keeps_a_result_recovered_in_the_same_call(self):
+        self.kill_mah()
+        self.manager.scan()
+        self.assertEqual(self.ledger.get_run(self.run_id)["state"], "SUBMISSION_UNKNOWN")
+        self.assert_recovered_result_takes_priority()
+        self.assertEqual(self.verify()["state"], "SUCCEEDED")
+        self.assertEqual(len(self.started), 1)
+
+    def test_mark_failed_right_after_mah_was_killed_keeps_the_recovered_result(self):
+        self.kill_mah()
+        self.assertEqual(self.ledger.get_run(self.run_id)["state"], "RUNNING")
+        # The CLI's own scan finds the Worker gone; collect_saved then recovers the .pending result.
+        probed = lambda ledger, **options: RunManager(ledger, process_probe=self.probe, **options)
+        with patch("mah.cli.RunManager", side_effect=probed):
+            self.assert_recovered_result_takes_priority()
+        # Marking it failed again, deliberately, ends the Run without a refund.
+        code, out, err = self.resolve_cli("--mark-failed", "--reason", "結果不採用")
+        self.assertEqual(code, 0, err)
+        self.assertEqual((json.loads(out)["state"], json.loads(out)["state_reason"]), ("FAILED", "user_marked_failed"))
+        self.assertEqual(self.ledger.get_grant(self.grant_id)["used_dispatches"], 1)
 
     def test_incomplete_output_stays_submission_unknown(self):
         self.kill_mah()

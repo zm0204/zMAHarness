@@ -244,6 +244,7 @@ class AgyPrintAdapter(CliWorkerAdapter):
 
     id = "agy-print"
     prefix = "agy"
+    check_capture = staticmethod(_check_capture)
     capture_reason = "agy_capture_integrity"
     efforts = AGY_EFFORTS
     command_setting = "agy_command"

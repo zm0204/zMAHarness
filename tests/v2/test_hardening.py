@@ -434,6 +434,105 @@ class CollectingResolutionTests(Scratch):
                                   "saved_evidence_error": "LedgerError: damaged"})
         self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 1)
 
+    def sealed_receipt(self, run, **changes):
+        """A claude-print process receipt that is valid JSON with matching streams, with `changes` applied."""
+        directory = self.manager._directory(run)
+        streams = {"stdout": b"sealed stdout", "stderr": b"sealed stderr"}
+        for name, data in streams.items():
+            (directory / f"claude.{name}.pending").write_bytes(data)
+        record = {"run_id": run, "task_sha256": sha256(b"task").hexdigest(), "invocation_sha256": "0" * 64,
+                  "stdout": sha256(streams["stdout"]).hexdigest(), "stderr": sha256(streams["stderr"]).hexdigest(),
+                  "exit_code": None, "termination": "interrupted", "launch_error": None, "launch_detail": None,
+                  "tool_events": [], "wall_milliseconds": None, "workspace_changed": None,
+                  "workspace_after_sha256": None, "process": None, "started_at": None} | changes
+        (directory / "claude.process.json").write_text(json.dumps(record), encoding="utf-8")
+
+    DAMAGED_CONTENT = {
+        # _check_capture: LedgerError(2)
+        "invalid_termination": ({"termination": "corrupted"}, None),
+        "invalid_tool_event": ({"tool_events": [{"type": "tool"}]}, None),
+        # _check_capture: LedgerError(20)
+        "launch_error_on_exited": ({"termination": "exited", "exit_code": 0,
+                                    "launch_error": "process_not_started"}, None),
+        # invocation.json verification_requirements: LedgerError(2)
+        "invalid_requirements": ({}, {"verification_requirements": "broken"}),
+    }
+
+    def test_damaged_receipt_content_is_evidence_damage_that_closing_actions_record(self):
+        digest = self.ledger.create_card(
+            "card-content", repo_root=self.state, task_key="content", trigger_ids=["T2"], prepare_mode="card",
+            allowed_templates=["review"],
+            allowed_targets=[{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "low"}],
+            max_dispatches=len(self.DAMAGED_CONTENT), ttl_minutes=10)
+        self.grant = self.ledger.approve("card-content", digest, via="manual_cli")
+        for index, (name, (changes, invocation)) in enumerate(self.DAMAGED_CONTENT.items()):
+            with self.subTest(name):
+                run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", b"{}")
+                self.sealed_receipt(run, **changes)
+                if invocation is not None:
+                    (self.manager._directory(run) / "invocation.json").write_text(json.dumps(invocation),
+                                                                                  encoding="utf-8")
+                # mah collect and a resolve without an action stay strict, now as evidence damage.
+                for args in (("resolve", run), ("collect", run)):
+                    refused = self.cli(*args)
+                    self.assertEqual(refused.returncode, 30, refused.stderr)
+                    self.assertIn("Sealed Worker evidence is damaged", refused.stderr)
+                self.assertEqual(self.ledger.get_run(run)["state"], "SUBMISSION_UNKNOWN")
+                action, expected = (("--abandon", "ABANDONED") if index % 2 else ("--mark-failed", "FAILED"))
+                resolved = self.cli("resolve", run, action)
+                self.assertEqual(resolved.returncode, 0, resolved.stderr)
+                view = json.loads(resolved.stdout)
+                self.assertEqual((view["state"], view["dispatch_consumed"]), (expected, 1))
+                detail = self.last_detail(run)
+                self.assertFalse(detail["refund"])
+                self.assertTrue(detail["saved_evidence_error"].startswith(
+                    "LedgerError: Sealed Worker evidence is damaged"), detail)
+                self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], index + 1)
+                self.assertNotEqual(self.cli("collect", run).returncode, 0)
+                self.assertEqual(self.ledger.get_run(run)["state"], expected)
+
+    def test_abandon_with_a_result_and_a_damaged_receipt_explains_the_state(self):
+        run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", b"{}")
+        self.manager.publish_result(run, {
+            "schema_version": "2.0", "run_id": run, "template": "review", "status": "completed", "summary": "s",
+            "blocked_reason": None, "open_questions": [], "template_payload": {"findings": []}})
+        abandoned = self.cli("resolve", run, "--abandon")
+        self.assertEqual(abandoned.returncode, 20, abandoned.stdout)
+        self.assertIn("不能 --abandon", abandoned.stderr)
+        self.assertIn("--mark-failed --reason", abandoned.stderr)
+        self.assertNotEqual(self.ledger.get_run(run)["state"], "ABANDONED")
+        resolved = self.cli("resolve", run, "--mark-failed", "--reason", "封存收據損毀，結果不採用")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        view = json.loads(resolved.stdout)
+        self.assertEqual((view["state"], view["state_reason"], view["dispatch_consumed"]),
+                         ("FAILED", "user_marked_failed", 1))
+        self.assertTrue(self.last_detail(run)["saved_evidence_error"].startswith("KeyError"))
+        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 1)
+
+    def test_each_adapter_checks_its_sealed_receipts_with_its_own_capture_rules(self):
+        from mah.adapters import agy_print, cli_worker
+
+        self.assertIs(AgyPrintAdapter.check_capture, agy_print._check_capture)
+        self.assertIs(cli_worker.CliWorkerAdapter.check_capture, cli_worker._check_capture)
+
+    def test_abandon_of_a_collecting_result_says_nothing_changed(self):
+        run = self.partial_run()
+        view = self.manager.resolve(run, action="abandon")
+        self.assertEqual(view["state"], "COLLECTING")
+        self.assertIn("--abandon 不適用", view["resolution_notice"])
+
+    def test_result_recovered_before_resolve_takes_priority_over_mark_failed(self):
+        run = self.partial_run()
+        view = self.manager.resolve(run, action="mark_failed", reason="以為 Worker 已經死了",
+                                    state_before_collect="SUBMISSION_UNKNOWN")
+        self.assertEqual((view["state"], view["completion_evidence"]), ("COLLECTING", "verified"))
+        self.assertIn("已救回結果", view["resolution_notice"])
+        self.assertIn(f"mah resolve {run} --mark-failed", view["resolution_notice"])
+        # The second, deliberate call ends it.
+        view = self.manager.resolve(run, action="mark_failed", reason="確定不採用")
+        self.assertEqual((view["state"], view["state_reason"]), ("FAILED", "user_marked_failed"))
+        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 1)
+
     def test_long_saved_evidence_error_keeps_its_tail(self):
         run = self.interrupted_claude_run("SUBMISSION_UNKNOWN", b"{}")
         message = "OSError: " + "x" * 2000 + r"C:\state\runs\claude.process.json"

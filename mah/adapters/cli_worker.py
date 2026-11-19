@@ -600,8 +600,29 @@ class CliWorkerAdapter:
                 raise LedgerError(30, self._message("receipt_streams"))
             streams[name] = data
         capture = self.capture_from_record(directory, record, streams)
+        self._check_sealed(directory, capture)
         return self.collect_sealed(run_id, capture, process_receipt_sha256=sha256(raw_receipt).hexdigest(),
                                    replay_output=replay_output)
+
+    # The receipt checks this Adapter's collect() applies; AgyPrintAdapter has its own.
+    check_capture = staticmethod(_check_capture)
+
+    def _check_sealed(self, directory, capture):
+        """A sealed receipt already on disk whose content fails the capture or invocation checks is damaged
+        evidence (exit code 30), not a usage error (2) or an illegal state (20). mah collect and a resolve
+        without an action stay strict; --mark-failed and --abandon record the error and close the Run."""
+        try:
+            self.check_capture(capture)
+            try:
+                metadata = _json(_read(directory / "invocation.json").decode("utf-8"))
+                requirements = metadata["verification_requirements"]
+            except (OSError, ValueError, KeyError, TypeError):
+                return  # collect() reports a missing or unreadable invocation as before
+            requirements_for(requirements)
+        except LedgerError as exc:
+            if exc.code not in (2, 20):
+                raise
+            raise LedgerError(30, f"Sealed Worker evidence is damaged: {exc}") from exc
 
     def _recover_pending(self, run_id):
         """Seal a process receipt from the .pending streams after mah itself was killed during observe.

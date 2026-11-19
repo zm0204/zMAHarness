@@ -16,7 +16,7 @@ from .ledger import (BRAND_NAME, DISPATCH_SCOPE_FIELDS, READ_ONLY_TEMPLATES, SHA
                      SUGGESTION_CARD_TITLE,
                      GrantLedger, LedgerError, TEMPLATE_TIMEOUTS, TEMPLATES, valid_id)
 from .preflight import preflight, require_unsandboxed_dispatch
-from .run_manager import RunManager
+from .run_manager import RECOVERABLE_STATES, RunManager
 from .verifier import VerificationEvidence, Verifier
 
 CARD_KEYS = {
@@ -326,6 +326,9 @@ def main(argv=None):
         config.database.parent.mkdir(parents=True, exist_ok=True)
         ledger = GrantLedger(config.database, limits=config.ledger_limits)
         manager = RunManager(ledger, max_summary_chars=config.values["limits"]["max_result_summary_chars"])
+        # resolve gives a result recovered in this call priority over --mark-failed, and both the scan
+        # below and collect_saved can recover one, so remember the state the Run had before either.
+        before = ledger.get_run(args.run_id) if args.group == "resolve" else None
         manager.scan()
         if args.group == "dispatch":
             run = dispatch_run(manager, config, args)
@@ -336,6 +339,11 @@ def main(argv=None):
         elif args.group == "resolve":
             run = ledger.get_run(args.run_id)
             saved_evidence_error = None
+            # Before the scan, or after it when the scan only just found the Worker gone (RUNNING ->
+            # SUBMISSION_UNKNOWN) and collect_saved is about to recover the .pending result.
+            states = [item["state"] for item in (before, run) if item is not None]
+            state_before_collect = next((state for state in states if state in RECOVERABLE_STATES),
+                                        states[-1] if states else None)
             if run is not None and has_factory(run["adapter"]):
                 try:
                     create_adapter(run["adapter"], manager, config).collect_saved(args.run_id)
@@ -348,8 +356,12 @@ def main(argv=None):
                             isinstance(exc, LedgerError) and exc.code != 30):
                         raise
                     saved_evidence_error = f"{type(exc).__name__}: {exc}"
-            output(manager.resolve(args.run_id, action=args.resolution, reason=args.reason,
-                                   saved_evidence_error=saved_evidence_error))
+            resolved = manager.resolve(args.run_id, action=args.resolution, reason=args.reason,
+                                       saved_evidence_error=saved_evidence_error,
+                                       state_before_collect=state_before_collect)
+            output(resolved)
+            if "resolution_notice" in resolved:
+                print(resolved["resolution_notice"], file=sys.stderr)
         elif args.group in ("accept", "reject-result"):
             output(manager.record_acceptance(
                 args.run_id, accepted=args.group == "accept", reason=args.reason,
