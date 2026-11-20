@@ -291,7 +291,7 @@ if ($python -and -not $pathsFailed) {
 
     # codex-exec 查設定與執行檔位置，執行 codex --version 顯示 cli_version，並以 account/rateLimits/read 唯讀查詢 ChatGPT 額度（不推論）。
     try {
-        $codexQuery = 'import json, subprocess, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; from mah.adapters.codex_exec import codex_environment; from mah import login_status; c = load_config(None); e = executable_lookup(''codex-exec'')(c); v = subprocess.run([str(e), ''--version''], stdin=subprocess.DEVNULL, capture_output=True, env=codex_environment(), timeout=20).stdout.decode(''utf-8'', ''replace'').strip() if e else None; q = login_status.codex_quota_status(e) if e else (''unknown'', ''未找到執行檔''); d = login_status.local_time(q[1]) if q[0] == ''exhausted'' else q[1]; print(json.dumps({''found'': e is not None, ''enabled'': adapter_enabled(c, ''codex-exec''), ''version'': v or None, ''quota'': q[0], ''quota_detail'': d}))'
+        $codexQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import adapter_enabled, load_config; from mah.adapters.registry import executable_lookup; from mah.model_detect import query_cli_version_raw; from mah import login_status; c = load_config(None); e = executable_lookup(''codex-exec'')(c); v = query_cli_version_raw(c, ''codex'', e, timeout=5) if e else None; q = login_status.codex_quota_status(e) if e else (''unknown'', ''未找到執行檔''); d = login_status.local_time(q[1]) if q[0] == ''exhausted'' else q[1]; print(json.dumps({''found'': e is not None, ''enabled'': adapter_enabled(c, ''codex-exec''), ''version'': v or None, ''quota'': q[0], ''quota_detail'': d}))'
         $codexRaw = & (Get-HarnessPathPython) -I -B -c $codexQuery $PSScriptRoot
         if ($LASTEXITCODE -ne 0) { throw '無法檢查 codex-exec。' }
         $codex = ($codexRaw -join "`n") | ConvertFrom-Json
@@ -334,7 +334,7 @@ if ($python -and -not $pathsFailed) {
 
     # 檢查模型目錄與帳號偵測／額度摘要（不推論）；偵測失敗或有警告顯示「需人工驗證」，不算失敗（spec §7.5）。
     try {
-        $modelsQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import load_config; from mah.model_detect import models_report; print(json.dumps(models_report(load_config(None)), ensure_ascii=False))'
+        $modelsQuery = 'import json, sys; sys.path.insert(0, sys.argv[1]); from mah.config import load_config; from mah.model_detect import models_report; print(json.dumps(models_report(load_config(None))))'
         $modelsRaw = & (Get-HarnessPathPython) -I -B -c $modelsQuery $PSScriptRoot
         if ($LASTEXITCODE -ne 0) { throw '無法執行模型目錄與偵測檢查。' }
         $modelsInfo = ($modelsRaw -join "`n") | ConvertFrom-Json
@@ -379,6 +379,24 @@ if ($python -and -not $pathsFailed) {
         if (@($modelsInfo.warnings).Count -gt 0) { $summaryParts += "警告：$((@($modelsInfo.warnings) -join '；'))" }
         $modelsStatus = if ($detDegraded) { '需人工驗證' } else { '通過' }
         Report-Check $modelsStatus '模型目錄與偵測' (($summaryParts -join '；') + '。詳見 python -B -m mah models。')
+        if ($modelsInfo.cli_versions) {
+            $verParts = New-Object System.Collections.Generic.List[string]
+            $driftWarnings = New-Object System.Collections.Generic.List[string]
+            foreach ($prop in $modelsInfo.cli_versions.PSObject.Properties) {
+                $cliName = $prop.Name
+                $cliVal = $prop.Value
+                $verParts.Add("$cliName $($cliVal.actual)")
+                if ($cliVal.status -eq 'drifted' -and $cliVal.warning) {
+                    $driftWarnings.Add($cliVal.warning)
+                }
+            }
+            if ($verParts.Count -gt 0) {
+                Report-Check '通過' 'CLI 版本' ($verParts -join '、')
+            }
+            foreach ($drift in $driftWarnings) {
+                Report-Check '警告' 'CLI 版本提醒' $drift
+            }
+        }
     }
     catch { Report-Check '需人工驗證' '模型目錄與偵測' $_.Exception.Message }
 }

@@ -122,5 +122,6 @@
 !/tests/v2/test_quota.py
 !/tests/v2/test_route.py
 !/tests/v2/test_query_timeout.py
+!/tests/v2/test_cli_version_drift.py
 !/tests/v2/fixtures/model_catalog/
 !/tests/v2/fixtures/model_catalog/**

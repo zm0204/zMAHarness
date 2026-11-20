@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -21,12 +22,19 @@ from .ledger import TARGET_ID, valid_id
 from .login_status import claude_login_reasons
 
 DETECT_TIMEOUT_SECONDS = 10
+VERSION_TIMEOUT_SECONDS = 5
 OVERALL_TIMEOUT_SECONDS = 25
 PARTIAL_TIMEOUT_WARNING = "部分查詢逾時"
 CACHE_FILENAME = "routing_cache.json"
 CACHE_VERSION = 1
 FUTURE_SKEW_TOLERANCE = timedelta(minutes=5)
 DEFAULT_INSPECT_ADAPTERS = ("agy-print", "codex-exec", "claude-print")
+CLI_ADAPTERS = {
+    "agy": "agy-print",
+    "codex": "codex-exec",
+    "claude": "claude-print",
+}
+CLI_VERSION_RE = re.compile(r"(?<![0-9A-Za-z.])v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)(?![0-9A-Za-z.])")
 _REAL_SUBPROCESS_RUN = subprocess.run
 _CACHE_LOCK = threading.Lock()
 
@@ -91,7 +99,13 @@ def executable_key(executable):
 
 
 def _empty_cache():
-    return {"version": CACHE_VERSION, "detect": {}, "quota": {}, "breakers": {"claude_usage": None}}
+    return {
+        "version": CACHE_VERSION,
+        "detect": {},
+        "quota": {},
+        "breakers": {"claude_usage": None},
+        "cli_versions": {},
+    }
 
 
 def read_routing_cache(path):
@@ -106,11 +120,13 @@ def read_routing_cache(path):
     detect = data.get("detect")
     quota = data.get("quota")
     breakers = data.get("breakers")
+    cli_versions = data.get("cli_versions")
     return {
         "version": CACHE_VERSION,
         "detect": dict(detect) if isinstance(detect, dict) else {},
         "quota": dict(quota) if isinstance(quota, dict) else {},
         "breakers": dict(breakers) if isinstance(breakers, dict) else {"claude_usage": None},
+        "cli_versions": dict(cli_versions) if isinstance(cli_versions, dict) else {},
     }
 
 
@@ -122,6 +138,7 @@ def write_routing_cache(path, data):
         "detect": data.get("detect", {}),
         "quota": data.get("quota", {}),
         "breakers": data.get("breakers", {"claude_usage": None}),
+        "cli_versions": data.get("cli_versions", {}),
     }
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -528,14 +545,136 @@ def _format_models_section(catalog, records, claude_info, *, max_effort):
     return entries
 
 
+def parse_cli_version(text):
+    """Extract a semver string from `--version` stdout (e.g. `codex-cli 0.169.0`, `2.1.325 (Claude Code)`)."""
+    if not isinstance(text, str):
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = CLI_VERSION_RE.search(stripped)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _cli_environment(cli_name):
+    if cli_name == "agy":
+        from .adapters.agy_print import _worker_environment
+        return _worker_environment()
+    if cli_name == "codex":
+        from .adapters.codex_exec import codex_environment
+        return codex_environment()
+    if cli_name == "claude":
+        from .adapters.claude_print import claude_environment
+        return claude_environment()
+    return None
+
+
+def query_cli_version_raw(config, cli_name, executable, *, timeout=VERSION_TIMEOUT_SECONDS):
+    """Run `<executable> --version` inside a Job Object with timeout; return stripped stdout or None."""
+    if executable is None:
+        return None
+    try:
+        result = process_tree.run_contained(
+            [str(executable), "--version"],
+            env=_cli_environment(cli_name),
+            cwd=query_cwd(config),
+            timeout=timeout,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    text = result.stdout.decode("utf-8", errors="replace").strip()
+    return text or None
+
+
+def query_cli_version(config, cli_name, executable, *, timeout=VERSION_TIMEOUT_SECONDS):
+    """Run `<executable> --version` inside a Job Object with timeout; return parsed version or `'unknown'`."""
+    raw = query_cli_version_raw(config, cli_name, executable, timeout=timeout)
+    parsed = parse_cli_version(raw) if raw is not None else None
+    return parsed or "unknown"
+
+
+def cli_version_drift_warning(cli_name, actual, tested):
+    """Return an advisory reminder when a known CLI version differs from `tested_cli`, else None."""
+    if not tested or not isinstance(actual, str) or not actual or actual == "unknown":
+        return None
+    if actual == tested:
+        return None
+    return f"{cli_name} {actual} 尚未經過 zMAHarness 驗證（已驗證 {tested}）"
+
+
+def _format_cli_version_entry(cli_name, actual, tested):
+    if not isinstance(actual, str) or not actual or actual == "unknown":
+        return {"actual": "unknown", "tested": tested, "status": "unknown"}
+    warning = cli_version_drift_warning(cli_name, actual, tested)
+    if warning is not None:
+        return {"actual": actual, "tested": tested, "status": "drifted", "warning": warning}
+    return {"actual": actual, "tested": tested, "status": "matched"}
+
+
+def _probe_cli_version_for_cache(config, cli_name, cached_entry, *, refresh=False, now=None,
+                                 exclude_roots=(), timeout=VERSION_TIMEOUT_SECONDS):
+    adapter = CLI_ADAPTERS.get(cli_name)
+    if adapter is None:
+        return "unknown", None
+    executable, _ = _resolve_executable(config, adapter, exclude_roots)
+    if executable is None:
+        return "unknown", None
+    exe_key = executable_key(executable)
+    if not refresh and isinstance(cached_entry, dict) and exe_key and cached_entry.get("exe_key") == exe_key:
+        cached_version = cached_entry.get("version")
+        if isinstance(cached_version, str) and cached_version and cached_version != "unknown":
+            return cached_version, None
+    actual = query_cli_version(config, cli_name, executable, timeout=timeout)
+    if actual != "unknown" and exe_key:
+        fetched_at = _iso_utc(now or datetime.now(UTC))
+        return actual, {"exe_key": exe_key, "version": actual, "fetched_at": fetched_at}
+    return actual, None
+
+
+def cached_cli_version_warnings(config, catalog, *, exclude_roots=()):
+    """Read-only CLI version drift reminders from `routing_cache.json`. Never spawns a subprocess."""
+    if catalog is None or not catalog.tested_cli:
+        return []
+    cached = read_routing_cache(cache_path(config)).get("cli_versions", {})
+    warnings = []
+    for cli_name, tested in catalog.tested_cli.items():
+        entry = cached.get(cli_name)
+        if not isinstance(entry, dict):
+            continue
+        version = entry.get("version")
+        if not isinstance(version, str) or not version or version == "unknown":
+            continue
+        adapter = CLI_ADAPTERS.get(cli_name)
+        if adapter is None:
+            continue
+        executable, _ = _resolve_executable(config, adapter, exclude_roots)
+        if executable is None:
+            continue
+        exe_key = executable_key(executable)
+        if not exe_key or entry.get("exe_key") != exe_key:
+            continue
+        warning = cli_version_drift_warning(cli_name, version, tested)
+        if warning is not None:
+            warnings.append(warning)
+    return warnings
+
+
 def models_report(config, *, refresh=False, include_all=False, repo_catalog_path=None, now=None,
                   overall_timeout=OVERALL_TIMEOUT_SECONDS):
-    """Build the JSON report for `mah models` (catalog + detection + quota) within `overall_timeout`."""
+    """Build the JSON report for `mah models` (catalog + detection + quota + CLI versions) within `overall_timeout`."""
     from .quota import QuotaState, cached_quota_fallback, get_quota_states
 
     moment = now or datetime.now(UTC)
     catalog, warnings = load_catalog(local_path=local_catalog_path(config), repo_path=repo_catalog_path)
     ttl_hours = catalog.routing.detect_ttl_hours if catalog is not None else 12
+    tested_cli = catalog.tested_cli if catalog is not None else {}
+    cpath = cache_path(config)
+    cached_cli_versions = read_routing_cache(cpath).get("cli_versions", {}) if tested_cli else {}
 
     adapters = list(DEFAULT_INSPECT_ADAPTERS)
     target_pools = ["chatgpt", "claude", "agy:gemini", "agy:claude"]
@@ -567,6 +706,12 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
     tasks["quota:agy"] = lambda: get_quota_states(
         config, catalog, agy_pools, refresh=refresh, now=moment, overall_timeout=overall_timeout,
     )
+    for cli_name in tested_cli:
+        tasks[f"cli_version:{cli_name}"] = (
+            lambda c=cli_name, entry=cached_cli_versions.get(cli_name): _probe_cli_version_for_cache(
+                config, c, entry, refresh=refresh, now=moment,
+            )
+        )
 
     done, _errors, timed_out = process_tree.run_parallel_with_deadline(tasks, timeout=overall_timeout)
     partial_timeout = bool(timed_out)
@@ -602,6 +747,27 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
     for pool_name in target_pools:
         quota_states.setdefault(pool_name, QuotaState(pool=pool_name, state="unknown", source="none"))
 
+    cli_versions = {}
+    cli_version_warnings = []
+    version_cache_updates = {}
+    for cli_name, tested in tested_cli.items():
+        key = f"cli_version:{cli_name}"
+        if key in done:
+            actual, cache_update = done[key]
+            if cache_update is not None:
+                version_cache_updates[cli_name] = cache_update
+        else:
+            actual = "unknown"
+        entry = _format_cli_version_entry(cli_name, actual, tested)
+        cli_versions[cli_name] = entry
+        if "warning" in entry:
+            cli_version_warnings.append(entry["warning"])
+    if version_cache_updates:
+        update_routing_cache(
+            cpath,
+            lambda latest: latest.setdefault("cli_versions", {}).update(version_cache_updates),
+        )
+
     # Keep a consistent ordering across adapters.
     ordered_records = {}
     for adapter in adapters:
@@ -612,7 +778,8 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
 
     max_effort = config.values["limits"]["max_effort"]
     all_warnings = list(dict.fromkeys([
-        *warnings, *quota_warnings, *([PARTIAL_TIMEOUT_WARNING] if partial_timeout else ()),
+        *warnings, *quota_warnings, *cli_version_warnings,
+        *([PARTIAL_TIMEOUT_WARNING] if partial_timeout else ()),
     ]))
     return {
         "catalog": {
@@ -621,6 +788,7 @@ def models_report(config, *, refresh=False, include_all=False, repo_catalog_path
             "warnings": warnings,
         },
         "warnings": all_warnings,
+        "cli_versions": cli_versions,
         "detection": _format_detection_section(catalog, ordered_records, claude_info, include_all=include_all),
         "quota": {pool_name: state.to_dict() for pool_name, state in quota_states.items()},
         "models": _format_models_section(catalog, ordered_records, claude_info, max_effort=max_effort),

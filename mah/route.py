@@ -21,6 +21,7 @@ from .model_detect import (
     OVERALL_TIMEOUT_SECONDS,
     PARTIAL_TIMEOUT_WARNING,
     DetectionRecord,
+    cached_cli_version_warnings,
     detect_adapters,
 )
 from .preflight import INVALID_MODEL_ID, AdapterCheckReport, adapter_checks, common_checks
@@ -972,6 +973,9 @@ def route(repo, *, task, level, mode, controller, config_path=None, override=Non
         catalog, warnings = load_catalog(local_path=local_catalog_path(common.config), repo_path=repo_catalog_path)
         if catalog is None:
             return _legacy_defaults(common, task, mode, warnings=warnings)
+        exclude_roots = (common.repo_root,) if common.repo_root else ()
+        drift_warnings = cached_cli_version_warnings(common.config, catalog, exclude_roots=exclude_roots)
+        warnings = list(dict.fromkeys([*warnings, *drift_warnings]))
         if override is not None:
             return _route_override(
                 common, catalog, task=task, level=level, mode=mode, controller=controller,
