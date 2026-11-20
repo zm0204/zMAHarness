@@ -95,7 +95,7 @@ class PreflightTests(unittest.TestCase):
         self.home.mkdir()
         self.repo = self.root / "repo"
         self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True, capture_output=True, timeout=15)
         self.agy = self.root / "tools" / "agy.exe"
         self.agy.parent.mkdir()
         self.agy.write_bytes(b"never executed by preflight")

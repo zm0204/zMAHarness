@@ -102,10 +102,10 @@ def _bundle_task(scratch):
     env = os.environ | {"GIT_AUTHOR_DATE": "2026-11-18T09:00:00Z", "GIT_COMMITTER_DATE": "2026-11-18T09:00:00Z"}
     git = ["git", "-c", "user.name=Golden", "-c", "user.email=golden@example.invalid", "-C", str(repo)]
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, env=env)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, env=env, timeout=15)
     (repo / "驗證文件.txt").write_bytes("驗證字串=0123456789abcdef0123456789abcdef\n".encode())
-    subprocess.run([*git, "add", "-A"], check=True, capture_output=True, env=env)
-    subprocess.run([*git, "commit", "-q", "-m", "seed"], check=True, capture_output=True, env=env)
+    subprocess.run([*git, "add", "-A"], check=True, capture_output=True, env=env, timeout=15)
+    subprocess.run([*git, "commit", "-q", "-m", "seed"], check=True, capture_output=True, env=env, timeout=15)
     instructions = scratch / "instructions.md"
     instructions.write_bytes("只分析 Context-Bundle 內的驗證文件.txt。findings 回傳空陣列。".encode())
     prepare_bundle(repo, ["驗證文件.txt"], instructions, scratch / "bundle", max_bytes=32768)

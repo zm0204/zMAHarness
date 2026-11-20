@@ -79,7 +79,7 @@ class ContainmentUnitTests(unittest.TestCase):
 
     def test_non_windows_is_not_contained(self):
         process = subprocess.Popen([sys.executable, "-I", "-B", "-c", "pass"])
-        self.addCleanup(process.wait)
+        self.addCleanup(process.wait, timeout=10)
         with patch.object(process_tree, "_supported", return_value=False):
             self.assertEqual(process_tree.contain(process), (None, None))
 
@@ -143,7 +143,7 @@ class ProcessTreeTests(WorkerFixture, unittest.TestCase):
         script.write_text(CONTROLLER, encoding="utf-8")
         controller = subprocess.Popen([sys.executable, "-I", "-B", str(script), str(REPO), str(self.tree),
                                        str(self.pid_file)], stdout=subprocess.PIPE, text=True)
-        self.addCleanup(controller.wait)
+        self.addCleanup(controller.wait, timeout=10)
         self.addCleanup(kill_quietly, controller.pid)
         line = controller.stdout.readline().strip()
         self.assertTrue(line.isdigit(), line)

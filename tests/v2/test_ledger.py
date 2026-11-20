@@ -262,7 +262,7 @@ except LedgerError as exc:
 """
 
         def contender():
-            gate.wait()
+            gate.wait(timeout=10)
             return subprocess.run(
                 [sys.executable, "-B", "-c", script, str(self.database), str(self.directory), grant],
                 cwd=Path(__file__).resolve().parents[2], capture_output=True, timeout=10, check=False,

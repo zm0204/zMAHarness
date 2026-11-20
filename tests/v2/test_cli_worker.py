@@ -105,10 +105,11 @@ class WorkerFixture:
         self.repo = self.root / "repo"
         self.repo.mkdir()
         git = ["git", "-c", "user.name=Harness Test", "-c", "user.email=harness@example.invalid"]
-        subprocess.run([*git, "init", "-q", str(self.repo)], check=True, capture_output=True)
+        subprocess.run([*git, "init", "-q", str(self.repo)], check=True, capture_output=True, timeout=15)
         (self.repo / "sample.txt").write_text("synthetic source\n", encoding="utf-8")
-        subprocess.run([*git, "-C", str(self.repo), "add", "sample.txt"], check=True, capture_output=True)
-        subprocess.run([*git, "-C", str(self.repo), "commit", "-q", "-m", "seed"], check=True, capture_output=True)
+        subprocess.run([*git, "-C", str(self.repo), "add", "sample.txt"], check=True, capture_output=True, timeout=15)
+        subprocess.run([*git, "-C", str(self.repo), "commit", "-q", "-m", "seed"], check=True, capture_output=True,
+                       timeout=15)
         self.trees = self.root / "trees"
         self.trees.mkdir()
         self.state = self.root / "state"
@@ -127,7 +128,7 @@ class WorkerFixture:
     def worktree(self):
         workspace = self.trees / f"tree-{uuid4().hex}"
         subprocess.run(["git", "-C", str(self.repo), "worktree", "add", "-q", "--detach", str(workspace), "HEAD"],
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, timeout=15)
         return workspace
 
     def bundle_task(self, scenario="success"):

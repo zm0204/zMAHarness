@@ -82,7 +82,7 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
 
     def registered(self):
         return subprocess.run(["git", "-C", str(self.repo), "worktree", "list", "--porcelain"], check=True,
-                              capture_output=True, text=True).stdout
+                              capture_output=True, text=True, timeout=15).stdout
 
     # ---- deletion -----------------------------------------------------------------------------------
     def test_accepted_run_and_its_worktree_are_deleted_on_apply_only(self):
@@ -107,7 +107,7 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
         (self.repo / "sample.txt").write_text("uncommitted change\n", encoding="utf-8")
         run_id, workspace, directory = self.make_run()
         subject = subprocess.run(["git", "-C", str(workspace), "log", "-1", "--format=%s"], check=True,
-                                 capture_output=True, text=True).stdout.strip()
+                                 capture_output=True, text=True, timeout=15).stdout.strip()
         self.assertEqual(subject, f"mah-snapshot:{run_id}")
         self.assertEqual(self.entry(self.clean(apply=True), run_id)["action"], "deleted")
         self.assertFalse(workspace.exists())
@@ -151,9 +151,9 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
     def test_worktree_moved_to_another_commit_keeps_the_run(self):
         run_id, workspace, directory = self.make_run()
         (workspace / "new.txt").write_text("not the snapshot\n", encoding="utf-8")
-        subprocess.run([*GIT, "-C", str(workspace), "add", "new.txt"], check=True, capture_output=True)
+        subprocess.run([*GIT, "-C", str(workspace), "add", "new.txt"], check=True, capture_output=True, timeout=15)
         subprocess.run([*GIT, "-C", str(workspace), "commit", "-q", "-m", "user work"], check=True,
-                       capture_output=True)
+                       capture_output=True, timeout=15)
         self.assert_kept(run_id, "worktree_present", directory, workspace)
 
     def test_failed_worktree_removal_keeps_the_run(self):
@@ -240,7 +240,7 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
     def stale_registration(self, parent):
         path = parent / f"stale-{uuid4().hex}"
         subprocess.run(["git", "-C", str(self.repo), "worktree", "add", "-q", "--detach", str(path), "HEAD"],
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, timeout=15)
         shutil.rmtree(path)
         return path
 
@@ -392,7 +392,7 @@ class CleanupTests(WorkerFixture, unittest.TestCase):
         outside = self.outside_files()
         link = self.ignored_junction(workspace, outside)
         self.assertEqual(subprocess.run(["git", "-C", str(workspace), "status", "--porcelain"], check=True,
-                                        capture_output=True, text=True).stdout, "")
+                                        capture_output=True, text=True, timeout=15).stdout, "")
         self.assert_kept(run_id, "worktree_contains_link", directory, workspace, link)
         self.assert_outside_intact(outside)
         report = self.clean(apply=True)

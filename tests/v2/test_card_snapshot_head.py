@@ -55,8 +55,9 @@ class SnapshotHeadTests(WorkerFixture, unittest.TestCase):
 
     def other_commit(self):
         (self.repo / "other.txt").write_text("another commit\n", encoding="utf-8")
-        subprocess.run([*GIT, "-C", str(self.repo), "add", "other.txt"], check=True, capture_output=True)
-        subprocess.run([*GIT, "-C", str(self.repo), "commit", "-q", "-m", "other"], check=True, capture_output=True)
+        subprocess.run([*GIT, "-C", str(self.repo), "add", "other.txt"], check=True, capture_output=True, timeout=15)
+        subprocess.run([*GIT, "-C", str(self.repo), "commit", "-q", "-m", "other"], check=True, capture_output=True,
+                       timeout=15)
         return _head(self.repo)
 
     def assert_refused_before_launch(self, code=10):
@@ -83,7 +84,7 @@ class SnapshotHeadTests(WorkerFixture, unittest.TestCase):
         def checkout(grant_id, workspace):
             self.assertNotEqual(_head(workspace), other)
             subprocess.run(["git", "-C", str(workspace), "checkout", "-q", "--detach", other],
-                           check=True, capture_output=True)
+                           check=True, capture_output=True, timeout=15)
 
         self.after_approval = checkout
         error = self.assert_refused_before_launch()

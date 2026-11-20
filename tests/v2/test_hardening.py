@@ -34,12 +34,12 @@ NO_CWD_SEARCH = "NoDefaultCurrentDirectoryInExePath"
 
 def git_repo(path, files):
     path.mkdir(parents=True)
-    subprocess.run([*GIT, "init", "-q", str(path)], check=True, capture_output=True)
+    subprocess.run([*GIT, "init", "-q", str(path)], check=True, capture_output=True, timeout=15)
     for name, text in files.items():
         (path / name).parent.mkdir(parents=True, exist_ok=True)
         (path / name).write_text(text, encoding="utf-8")
-    subprocess.run([*GIT, "-C", str(path), "add", "-A"], check=True, capture_output=True)
-    subprocess.run([*GIT, "-C", str(path), "commit", "-q", "-m", "seed"], check=True, capture_output=True)
+    subprocess.run([*GIT, "-C", str(path), "add", "-A"], check=True, capture_output=True, timeout=15)
+    subprocess.run([*GIT, "-C", str(path), "commit", "-q", "-m", "seed"], check=True, capture_output=True, timeout=15)
     return path
 
 
@@ -558,7 +558,7 @@ class SnapshotExclusionTests(Scratch):
         report = prepare_worktree(repo, self.root / "trees", f"review-{uuid4().hex}")
         tree = Path(report["worktree_path"])
         self.addCleanup(subprocess.run, ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)],
-                        capture_output=True)
+                        capture_output=True, timeout=15)
         present = sorted(path.relative_to(tree).as_posix() for path in tree.rglob("*")
                          if path.is_file() and ".git" not in path.parts)
         self.assertEqual(present, ["app.py"])
@@ -567,7 +567,7 @@ class SnapshotExclusionTests(Scratch):
         self.assertTrue(all((repo / name).is_file() for name in self.AI_SETTINGS))
         instructions = self.root / "instructions.md"
         instructions.write_text("Review CLAUDE.md.", encoding="utf-8")
-        subprocess.run([*GIT, "-C", str(repo), "stash", "-u", "-q"], check=True, capture_output=True)
+        subprocess.run([*GIT, "-C", str(repo), "stash", "-u", "-q"], check=True, capture_output=True, timeout=15)
         sealed = prepare_bundle(repo, ["CLAUDE.md"], instructions, self.root / "bundle", max_bytes=32768)
         self.assertEqual([item["path"] for item in sealed["manifest"]["files"]], ["CLAUDE.md"])
 
@@ -578,7 +578,7 @@ class SnapshotExclusionTests(Scratch):
         report = prepare_worktree(repo, self.root / "trees", f"review-{uuid4().hex}")
         tree = Path(report["worktree_path"])
         self.addCleanup(subprocess.run, ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)],
-                        capture_output=True)
+                        capture_output=True, timeout=15)
         present = sorted(path.relative_to(tree).as_posix() for path in tree.rglob("*")
                          if path.is_file() and ".git" not in path.parts)
         self.assertEqual(present, ["agent/notes.md", "app.py"])
