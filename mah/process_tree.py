@@ -207,7 +207,7 @@ def run_contained(argv, *, env=None, cwd=None, timeout=10, popen=None):
         # Support unit-test MagicMock stand-ins that implement communicate(timeout=...).
         try:
             out, err = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except BaseException:
             _kill_quietly(process)
             raise
         return subprocess.CompletedProcess(cmd, process.returncode, out, err)
@@ -237,17 +237,21 @@ def run_contained(argv, *, env=None, cwd=None, timeout=10, popen=None):
     deadline = time.monotonic() + timeout
     timed_out = False
     try:
-        remaining = max(0.0, deadline - time.monotonic())
-        process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-
-    if not timed_out:
-        for thread in (t_out, t_err):
+        try:
             remaining = max(0.0, deadline - time.monotonic())
-            thread.join(timeout=remaining)
-        if t_out.is_alive() or t_err.is_alive():
+            process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
             timed_out = True
+
+        if not timed_out:
+            for thread in (t_out, t_err):
+                remaining = max(0.0, deadline - time.monotonic())
+                thread.join(timeout=remaining)
+            if t_out.is_alive() or t_err.is_alive():
+                timed_out = True
+    except BaseException:
+        terminate_tree(process, job)
+        raise
 
     if timed_out:
         terminate_tree(process, job)
@@ -265,7 +269,7 @@ def run_parallel_with_deadline(tasks, *, timeout):
     """Run `{key: callable}` on daemon threads with a shared wall-clock deadline.
 
     Returns (results_dict, errors_dict, timed_out_keys_tuple). Daemon threads never block Python exit
-    if a slow call outlives the deadline.
+    if a slow call outlives the deadline, and late completions cannot mutate the returned snapshots.
     """
     if not tasks:
         return {}, {}, ()
@@ -273,12 +277,20 @@ def run_parallel_with_deadline(tasks, *, timeout):
     results = {}
     errors = {}
     threads = {}
+    lock = threading.Lock()
+    closed = False
 
     def _worker(key, fn):
         try:
-            results[key] = fn()
+            value = fn()
         except Exception as exc:
-            errors[key] = exc
+            with lock:
+                if not closed:
+                    errors[key] = exc
+        else:
+            with lock:
+                if not closed:
+                    results[key] = value
 
     for key, fn in tasks.items():
         thread = threading.Thread(target=_worker, args=(key, fn), daemon=True)
@@ -290,5 +302,12 @@ def run_parallel_with_deadline(tasks, *, timeout):
         remaining = max(0.0, deadline - time.monotonic())
         thread.join(timeout=remaining)
 
-    timed_out = tuple(key for key, thread in threads.items() if thread.is_alive())
-    return results, errors, timed_out
+    with lock:
+        closed = True
+        results_snapshot = dict(results)
+        errors_snapshot = dict(errors)
+        timed_out = tuple(
+            key for key in tasks
+            if key not in results_snapshot and key not in errors_snapshot
+        )
+    return results_snapshot, errors_snapshot, timed_out

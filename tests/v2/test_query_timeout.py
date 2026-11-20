@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -154,6 +155,120 @@ class GrandchildPipeTimeoutTests(unittest.TestCase):
             self.addCleanup(_kill_pid_quietly, _wait_for_pid(pid2, seconds=0.2))
             self.assertIsNone(reply)
             self.assertLess(elapsed2, 3.0, f"_quota_reply without Job hung for {elapsed2:.2f}s")
+
+    def test_run_contained_terminates_tree_on_keyboard_interrupt_during_wait(self):
+        pid_file = self.root / "kbd_wait.pid"
+        launched = []
+
+        def interrupting_popen(argv, **kwargs):
+            proc = self.real_popen(
+                [sys.executable, "-I", "-B", str(self.script), str(pid_file), "wait", "30"],
+                **kwargs,
+            )
+            launched.append(proc)
+            real_wait = proc.wait
+            calls = {"count": 0}
+
+            def wait_once(timeout=None):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    _wait_for_pid(pid_file, seconds=3.0)
+                    raise KeyboardInterrupt("simulated ctrl-c in wait")
+                return real_wait(timeout=timeout)
+
+            proc.wait = wait_once
+            return proc
+
+        try:
+            with patch.object(process_tree, "terminate_tree", wraps=process_tree.terminate_tree) as term_spy:
+                with self.assertRaises(KeyboardInterrupt):
+                    process_tree.run_contained(["standin"], timeout=10, popen=interrupting_popen)
+            term_spy.assert_called_once()
+            grandchild_pid = _wait_for_pid(pid_file, seconds=0.2)
+            self.addCleanup(_kill_pid_quietly, grandchild_pid)
+            if os.name == "nt" and grandchild_pid is not None:
+                self.assertTrue(_wait_gone(grandchild_pid), "KeyboardInterrupt in wait left grandchild alive")
+        finally:
+            grandchild_pid = _wait_for_pid(pid_file, seconds=0.1)
+            _kill_pid_quietly(grandchild_pid)
+            for proc in launched:
+                _kill_pid_quietly(proc.pid)
+
+    def test_run_contained_terminates_tree_on_keyboard_interrupt_during_join(self):
+        pid_file = self.root / "kbd_join.pid"
+        launched = []
+
+        def exit_popen(argv, **kwargs):
+            proc = self.real_popen(
+                [sys.executable, "-I", "-B", str(self.script), str(pid_file), "exit", "30"],
+                **kwargs,
+            )
+            launched.append(proc)
+            return proc
+
+        real_join = threading.Thread.join
+        join_calls = {"count": 0}
+
+        def interrupting_join(thread_self, timeout=None):
+            join_calls["count"] += 1
+            if join_calls["count"] == 1:
+                _wait_for_pid(pid_file, seconds=3.0)
+                raise KeyboardInterrupt("simulated ctrl-c in join")
+            return real_join(thread_self, timeout=timeout)
+
+        try:
+            with (patch.object(process_tree, "terminate_tree", wraps=process_tree.terminate_tree) as term_spy,
+                  patch.object(threading.Thread, "join", new=interrupting_join)):
+                with self.assertRaises(KeyboardInterrupt):
+                    process_tree.run_contained(["standin"], timeout=10, popen=exit_popen)
+            term_spy.assert_called_once()
+            grandchild_pid = _wait_for_pid(pid_file, seconds=0.2)
+            self.addCleanup(_kill_pid_quietly, grandchild_pid)
+            if os.name == "nt" and grandchild_pid is not None:
+                self.assertTrue(_wait_gone(grandchild_pid), "KeyboardInterrupt in join left grandchild alive")
+        finally:
+            grandchild_pid = _wait_for_pid(pid_file, seconds=0.1)
+            _kill_pid_quietly(grandchild_pid)
+            for proc in launched:
+                _kill_pid_quietly(proc.pid)
+
+    def test_run_parallel_with_deadline_ignores_late_writes_after_timeout(self):
+        release = threading.Event()
+        late_ok_done = threading.Event()
+        late_err_done = threading.Event()
+
+        def late_ok():
+            release.wait(timeout=5.0)
+            try:
+                return "late-value"
+            finally:
+                late_ok_done.set()
+
+        def late_err():
+            release.wait(timeout=5.0)
+            try:
+                raise RuntimeError("late-error")
+            finally:
+                late_err_done.set()
+
+        try:
+            results, errors, timed_out = process_tree.run_parallel_with_deadline(
+                {"fast": lambda: "ok", "late_ok": late_ok, "late_err": late_err},
+                timeout=0.05,
+            )
+            self.assertEqual(results, {"fast": "ok"})
+            self.assertEqual(errors, {})
+            self.assertEqual(set(timed_out), {"late_ok", "late_err"})
+
+            release.set()
+            self.assertTrue(late_ok_done.wait(timeout=2.0))
+            self.assertTrue(late_err_done.wait(timeout=2.0))
+            time.sleep(0.05)
+
+            self.assertEqual(results, {"fast": "ok"})
+            self.assertEqual(errors, {})
+        finally:
+            release.set()
 
 
 class OverallDeadlineTests(unittest.TestCase):
