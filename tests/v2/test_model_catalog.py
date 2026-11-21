@@ -389,6 +389,40 @@ picks = [
             ("low", "medium", "high"),
         )
 
+    def test_openai_api_route_is_refused_in_4a_1(self):
+        path = self.write("openai_api_route.toml", """
+schema_version = 1
+updated = "2026-11-01"
+
+[[models]]
+key = "local-qwen"
+display = "Local Qwen"
+family = "qwen"
+status = "selectable"
+billing = "local"
+efforts = ["medium"]
+routes = [{ adapter = "openai-api", id = "lmstudio/qwen", quota = "local:lmstudio" }]
+""")
+        with self.assertRaisesRegex(CatalogError, "openai-api 的目錄路由在 4a-2 才支援"):
+            load_repo_catalog(path)
+        local_path = self.write("openai_api_local.toml", """
+schema_version = 1
+
+[[models]]
+key = "local-qwen"
+display = "Local Qwen"
+family = "qwen"
+status = "selectable"
+billing = "local"
+efforts = ["medium"]
+routes = [{ adapter = "openai-api", id = "lmstudio/qwen", quota = "local:lmstudio" }]
+""")
+        catalog, warnings = load_catalog(local_path=local_path, repo_path=REPO_CATALOG_PATH)
+        self.assertIsNotNone(catalog)
+        self.assertFalse(catalog.local_overrides)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("openai-api 的目錄路由在 4a-2 才支援", warnings[0])
+
 
 if __name__ == "__main__":
     unittest.main()

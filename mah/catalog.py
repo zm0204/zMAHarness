@@ -254,6 +254,8 @@ def _parse_routing(raw, base=None):
 def _parse_route(raw, *, model_key, status, efforts):
     _check_keys(raw, ROUTE_KEYS, f"models[{model_key}].routes")
     adapter = _single_line(raw.get("adapter"), f"models[{model_key}].routes.adapter")
+    if adapter == "openai-api":
+        raise CatalogError("openai-api 的目錄路由在 4a-2 才支援")
     if not registry.is_registered(adapter):
         raise CatalogError(f"models[{model_key}] 的 Adapter 尚未註冊：{adapter}")
     quota = _single_line(raw.get("quota"), f"models[{model_key}].routes.quota")

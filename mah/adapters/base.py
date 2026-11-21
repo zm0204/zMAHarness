@@ -29,6 +29,8 @@ class AdapterPolicy:
     replays_structured_output: bool = False
     # A process_not_started pre-submit refund is allowed with a bound capture hash.
     refunds_unstarted_process: bool = False
+    # Refunding a Run (FAILED_PRE_SUBMIT or CANCELLED) also closes an ACTIVE Grant so a new card is required.
+    closes_grant_on_refund: bool = False
     # GUI submission: a LAUNCHING run may be cancelled with gui_not_submitted evidence.
     gui_submission: bool = False
     # Success comes only from the template Verifier; adoption totals are checked

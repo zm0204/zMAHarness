@@ -523,6 +523,12 @@ class GrantLedger:
             detail["result_sha256"] = result_sha256
         event(db, run_id, now, expected, state, detail)
         expire_grants(db, now)
+        if refund and policy_for(run["adapter"]).closes_grant_on_refund:
+            db.execute(
+                """UPDATE grants SET status = 'CLOSED'
+                   WHERE grant_id = ? AND status = 'ACTIVE'""",
+                (run["grant_id"],),
+            )
         if state in TERMINAL_STATES and not refund:
             db.execute(
                 """UPDATE grants SET status = 'EXHAUSTED'

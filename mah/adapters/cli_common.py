@@ -3,6 +3,7 @@
 They lived in agy_print.py, which made the shared base depend on the agy module. agy_print re-exports
 every name, so its imports and test patch targets stay valid.
 """
+from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -19,6 +20,27 @@ CAPTURE_STATES = {"LAUNCHING", "RUNNING", "COLLECTING", "SUBMISSION_UNKNOWN", "T
 WORKER_ENV = {"SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATH", "PATHEXT",
               "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA",
               "PROGRAMFILES", "PROGRAMFILES(X86)", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"}
+# Keywords that strict structured outputs may not accept; the Verifier still enforces the full template rules.
+STRICT_UNSUPPORTED = frozenset({"minLength", "maxLength", "pattern", "minimum", "maximum", "minItems", "maxItems",
+                                "format"})
+JSON_TYPES = ((bool, "boolean"), (int, "integer"), (float, "number"), (str, "string"))
+
+
+def strict_output_schema(schema):
+    """Derive a strict JSON Schema document from the shared result schema, never a hand-written copy."""
+    def convert(node):
+        if isinstance(node, list):
+            return [convert(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        converted = {key: convert(value) for key, value in node.items() if key not in STRICT_UNSUPPORTED}
+        if "const" in converted:
+            value = converted.pop("const")
+            kind = next(name for python_type, name in JSON_TYPES if type(value) is python_type)
+            converted.setdefault("type", kind)
+            converted["enum"] = [value]
+        return converted
+    return convert(deepcopy(schema))
 
 
 def _bundle_workspace_snapshot(workspace):

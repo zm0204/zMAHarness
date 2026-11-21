@@ -213,6 +213,42 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.ledger.get_run(run)["dispatch_consumed"], 0)
         self.assertNotEqual(self.reserve(grant), run)
 
+    def test_strict_output_schema_shared_in_cli_common(self):
+        from mah.adapters.cli_common import _response_schema, strict_output_schema
+        from mah.adapters.codex_exec import strict_output_schema as codex_strict_output_schema
+
+        self.assertIs(strict_output_schema, codex_strict_output_schema)
+        strict_schema = strict_output_schema(_response_schema("run-1", "review", 1200))
+        self.assertEqual(strict_schema["properties"]["run_id"], {"type": "string", "enum": ["run-1"]})
+        self.assertNotIn("maxLength", strict_schema["properties"]["summary"])
+
+    def test_closes_grant_on_refund_closes_active_grant_for_failed_pre_submit_and_cancelled(self):
+        from unittest.mock import patch
+        from mah.adapters.base import AdapterPolicy
+
+        closing_policy = AdapterPolicy(closes_grant_on_refund=True, refunds_unstarted_process=True)
+        with patch("mah.ledger.policy_for", side_effect=lambda name: closing_policy if name == "closing-test" else AdapterPolicy()):
+            for terminal_state, use_launch in (("FAILED_PRE_SUBMIT", True), ("CANCELLED", False)):
+                with self.subTest(terminal_state=terminal_state):
+                    card_id = f"card-close-{terminal_state.lower()}"
+                    grant = self.approve(
+                        card_id,
+                        task_key=card_id,
+                        max_dispatches=1,
+                        allowed_targets=[{"adapter": "closing-test", "model": "fixture", "effort_max": "medium"}],
+                    )
+                    run = self.reserve(grant, adapter="closing-test")
+                    if use_launch:
+                        self.launch(run)
+                        self.ledger.transition(run, "LAUNCHING", "FAILED_PRE_SUBMIT", reason="auth_missing")
+                    else:
+                        self.ledger.transition(run, "RESERVED", "CANCELLED")
+                    grant_row = self.ledger.get_grant(grant)
+                    self.assertEqual(grant_row["used_dispatches"], 0)
+                    self.assertEqual(grant_row["status"], "CLOSED")
+                    self.assertEqual(self.ledger.get_run(run)["dispatch_consumed"], 0)
+                    self.assert_code(12, self.reserve, grant, adapter="closing-test")
+
     def test_run_insert_and_debit_roll_back_when_event_insert_fails(self):
         grant = self.approve()
         with closing(sqlite3.connect(self.database)) as db, db:

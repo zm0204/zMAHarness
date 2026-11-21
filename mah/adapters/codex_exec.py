@@ -1,5 +1,4 @@
 """Read-only GPT Worker through the official Codex CLI (`codex exec`), Context-Bundle only."""
-from copy import deepcopy
 from hashlib import sha256
 import json
 import os
@@ -11,7 +10,8 @@ import subprocess
 from ..context_bundle import bundle_manifest
 from ..ledger import READ_ONLY_TEMPLATES, LedgerError
 from ..run_manager import _bytes
-from .cli_common import WORKER_ENV, _count, _json, _response_schema, _text, _uuid
+from .cli_common import (JSON_TYPES, STRICT_UNSUPPORTED, WORKER_ENV, _count, _json, _response_schema,  # noqa: F401
+                         _text, _uuid, strict_output_schema)
 from .cli_worker import STRUCTURED_OUTPUT_CONFLICT, CliWorkerAdapter
 from . import codex_probe
 
@@ -56,32 +56,11 @@ WORKTREE_REFUSED = ("codex-exec only supports Context-Bundle: Codex reads files 
                     "to a Disposable Worktree. Use Context-Bundle or another Worker.")
 TEMPLATE_REFUSED = ("codex-exec only runs read-only analysis (review, second-opinion, research); "
                     "{template} is refused because every Codex tool is disabled and the Worker never writes files.")
-# Keywords that strict structured outputs may not accept; the Verifier still enforces the full template rules.
-STRICT_UNSUPPORTED = frozenset({"minLength", "maxLength", "pattern", "minimum", "maximum", "minItems", "maxItems",
-                                "format"})
-JSON_TYPES = ((bool, "boolean"), (int, "integer"), (float, "number"), (str, "string"))
 # `codex exec --json` item types that are not tool calls. `error` is a CLI notice (the smoke shows
 # "Code Mode is unavailable"). Tool items in 0.154.0: command_execution, file_change, mcp_tool_call,
 # collab_tool_call, web_search, todo_list.
 NON_TOOL_ITEMS = frozenset({"agent_message", "reasoning", "error"})
 TOOL_ITEM_OBSERVED = "codex_tool_item_observed"
-
-
-def strict_output_schema(schema):
-    """Derive the --output-schema document from the shared result schema, never a hand-written copy."""
-    def convert(node):
-        if isinstance(node, list):
-            return [convert(item) for item in node]
-        if not isinstance(node, dict):
-            return node
-        converted = {key: convert(value) for key, value in node.items() if key not in STRICT_UNSUPPORTED}
-        if "const" in converted:
-            value = converted.pop("const")
-            kind = next(name for python_type, name in JSON_TYPES if type(value) is python_type)
-            converted.setdefault("type", kind)
-            converted["enum"] = [value]
-        return converted
-    return convert(deepcopy(schema))
 
 
 def _native_file(path):

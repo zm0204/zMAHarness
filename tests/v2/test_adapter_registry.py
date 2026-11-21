@@ -32,6 +32,7 @@ OLD_NAME_CHECKS = {
     "template_verified": {"fake", "agy-print"},
     # New in the hardening phase: delegate-implement is deferred for every Worker Adapter.
     "allows_delegate_implement": {"fake"},
+    "closes_grant_on_refund": set(),
 }
 
 
