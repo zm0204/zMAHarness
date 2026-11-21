@@ -30,6 +30,8 @@ from .cli_worker import CliLaunchHandle, CliWorkerAdapter, check_recovered
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens", "total_tokens")
 
 
+SCHEMA_FILE = "agy.schema.json"
+AGY_ENV = frozenset(WORKER_ENV | {"AGY_CLI_DISABLE_AUTO_UPDATE"})
 AGY_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 REQUIRED_FLAGS = {"--print", "--output-format", "--model", "--effort", "--mode", "--sandbox",
                   "--settings", "--print-timeout", "--json-schema", "--disable-slash-commands", "--log-file"}
@@ -54,7 +56,7 @@ DISPOSABLE_WORKTREE_SETTINGS = {
 
 
 def _worker_environment():
-    return {key: value for key, value in os.environ.items() if key.upper() in WORKER_ENV}
+    return {key: value for key, value in os.environ.items() if key.upper() in AGY_ENV}
 
 
 def _invocation_snapshot(plan):
@@ -378,14 +380,16 @@ class AgyPrintAdapter(CliWorkerAdapter):
             mode_flags = ("--mode", "plan")
             settings = _bytes(DISPOSABLE_WORKTREE_SETTINGS).decode()
         slash_flags = () if kind == "disposable_worktree" else ("--disable-slash-commands",)
-        schema = _response_schema(run_id, template, self.manager.max_summary_chars)
+        schema = _bytes(_response_schema(run_id, template, self.manager.max_summary_chars))
+        launch_files = self.invocation_files(run_id=run_id, template=template)
+        schema_arg = str(directory / SCHEMA_FILE) if SCHEMA_FILE in launch_files else schema.decode()
         prompt = f"MultiAgentHarness V2 run_id={run_id}, template={template}\n" + (
             "請依 JSON Schema 回傳單一結果物件。\n\n" + task_text
         )
         argv = (str(executable), "--model", model, "--effort", effort, *mode_flags,
                 "--sandbox", "--settings", settings,
                 "--output-format", "json", "--print-timeout", f"{timeout_s}s",
-                "--json-schema", _bytes(schema).decode(), *slash_flags,
+                "--json-schema", schema_arg, *slash_flags,
                 "--log-file", str(directory / "agy.cli.log"), "-p", prompt)
         if any(any(part in value.lower() for part in ("dangerously", "skip-permissions", "bypass"))
                for value in argv[1:-1] if value.startswith("-")):
@@ -399,11 +403,19 @@ class AgyPrintAdapter(CliWorkerAdapter):
             "cwd": str(cwd), "workspace_baseline_sha256": baseline, "workspace_kind": kind,
             "timeout_s": timeout_s, "verification_requirements": requirements, "stdin_file": None,
         }
+        if launch_files:
+            metadata["launch_files"] = {name: sha256(content).hexdigest() for name, content in launch_files.items()}
         if bundle is not None:
             metadata.update(launch_profile="context-bundle", bundle_manifest_sha256=bundle[1],
                             permissions_observed="unknown", sandbox_observed="unknown", tools_observed="unknown")
         return InvocationPlan(run_id, argv, cwd, kind, timeout_s, _bytes(metadata), baseline, task_sha,
                               model, effort, template)
+
+    def invocation_files(self, *, run_id, template):
+        if os.name != "nt":
+            return {}
+        schema = _response_schema(run_id, template, self.manager.max_summary_chars)
+        return {SCHEMA_FILE: _bytes(schema)}
 
     # ---- CliWorkerAdapter hooks ---------------------------------------------------------------------
     def resolve_executable(self):

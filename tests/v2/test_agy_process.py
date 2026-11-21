@@ -76,7 +76,8 @@ else:
     scenario = re.search(r"scenario=(\w+)", args.p)[1]
 assert args.output_format == "json" and args.print_timeout.endswith("s")
 assert sys.stdin.buffer.read() == b""
-schema = json.loads(args.json_schema)
+schema_text = args.json_schema if args.json_schema.startswith("{") else Path(args.json_schema).read_text(encoding="utf-8")
+schema = json.loads(schema_text)
 run_id = schema["properties"]["run_id"]["const"]
 template = schema["properties"]["template"]["const"]
 time.sleep(0.1)
@@ -286,9 +287,19 @@ class AgyProcessTests(unittest.TestCase):
 
     def test_end_to_end_preserves_utf8_and_requires_independent_verifier(self):
         self.grant = self.make_grant(timeout=60)
-        with patch("mah.adapters.agy_print.Popen", side_effect=self.substitute):
+        with patch.dict(os.environ, {"AGY_CLI_DISABLE_AUTO_UPDATE": "1", "UNLISTED_VAR": "secret"}), patch(
+                "mah.adapters.agy_print.Popen", side_effect=self.substitute):
             view = self.run_dispatch(timeout_s=60, reported_flags=FAKE_HELP.replace("--disable-slash-commands", ""))
+            self.assertEqual(self.adapter.worker_environment().get("AGY_CLI_DISABLE_AUTO_UPDATE"), "1")
+            self.assertNotIn("UNLISTED_VAR", self.adapter.worker_environment())
         self.assertEqual(len(self.started), 1)
+        if os.name == "nt":
+            schema_file = self.directory / "agy.schema.json"
+            self.assertTrue(schema_file.is_file())
+            invocation = json.loads((self.directory / "invocation.json").read_bytes())
+            self.assertEqual(invocation["launch_files"],
+                             {"agy.schema.json": sha256(schema_file.read_bytes()).hexdigest()})
+            self.assertEqual(invocation["argv"][invocation["argv"].index("--json-schema") + 1], str(schema_file))
         self.assertEqual((view["state"], view["completion_evidence"], view["exit_code"]), ("COLLECTING", "verified", 0))
         self.assertEqual(view["agy_capture"]["workspace_changed"], False)
         self.assertEqual((self.directory / "agy.stderr.txt").read_bytes(), "合成警告\r\n".encode())

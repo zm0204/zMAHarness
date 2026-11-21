@@ -112,7 +112,8 @@ class ClaudeEnvironmentTests(unittest.TestCase):
     def test_credentials_and_host_session_variables_are_not_passed(self):
         extra = CREDENTIAL_VARIABLES | {"CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli",
                                         "CLAUDE_CONFIG_DIR": r"C:\synthetic\claude",
-                                        "CLAUDE_CODE_GIT_BASH_PATH": r"C:\synthetic\bash.exe", "PATH": "synthetic"}
+                                        "CLAUDE_CODE_GIT_BASH_PATH": r"C:\synthetic\bash.exe",
+                                        "DISABLE_AUTOUPDATER": "1", "PATH": "synthetic"}
         with patch.dict(os.environ, extra):
             environment = claude_environment()
         self.assertFalse([key for key in environment if key.upper().startswith("ANTHROPIC_")])
@@ -120,6 +121,7 @@ class ClaudeEnvironmentTests(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_ENTRYPOINT", environment)
         self.assertEqual(environment["CLAUDE_CONFIG_DIR"], r"C:\synthetic\claude")
         self.assertEqual(environment["CLAUDE_CODE_GIT_BASH_PATH"], r"C:\synthetic\bash.exe")
+        self.assertEqual(environment["DISABLE_AUTOUPDATER"], "1")
         self.assertEqual(environment["PATH"], "synthetic")
 
 

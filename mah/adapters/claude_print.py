@@ -26,7 +26,7 @@ FORBIDDEN_PERMISSION_MODES = frozenset({"bypassPermissions", "acceptEdits", "aut
 # Any tool that can write, run commands or reach the network; only Read, Grep and Glob are ever allowed.
 FORBIDDEN_TOOLS = frozenset({"Bash", "PowerShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "WebFetch",
                              "WebSearch", "Task", "Agent", "KillShell", "BashOutput", "SlashCommand", "Skill"})
-CLAUDE_ENV = frozenset(WORKER_ENV | {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH"})
+CLAUDE_ENV = frozenset(WORKER_ENV | {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH", "DISABLE_AUTOUPDATER"})
 NPM_SHIMS = ("claude.cmd", "claude.ps1", "claude")
 NPM_NATIVE = Path("node_modules") / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
 MISSING_EXECUTABLE = ("找不到 claude 的原生執行檔（.exe）。zMAHarness 不經由 .cmd、.bat、.ps1 轉呼啟動；"

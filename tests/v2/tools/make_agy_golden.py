@@ -185,6 +185,9 @@ def generate(name, state, inputs):
         stack.enter_context(patch("mah.ledger.uuid4", return_value=GRANT_ID))
         stack.enter_context(patch("mah.run_manager.getpid", return_value=OWNER_PID))
         stack.enter_context(patch("mah.adapters.agy_print.Popen", side_effect=AssertionError("golden never launches")))
+        # The 1.5.5 golden fixtures were generated from build_invocation + claim_launch before Windows
+        # published agy.schema.json through launch().
+        stack.enter_context(patch.object(AgyPrintAdapter, "invocation_files", return_value={}))
         ledger = GrantLedger(state / "ledger.sqlite3", clock=lambda: CLOCK)
         manager = RunManager(ledger, process_probe=_probe)
         adapter = AgyPrintAdapter(manager)
