@@ -5,7 +5,9 @@ from pathlib import Path
 import subprocess
 from tempfile import mkstemp
 
-from .adapters.registry import executable_lookup, executable_missing_reason, refused_model_reason
+from typing import Any
+
+from .adapters.registry import executable_lookup, executable_missing_reason, preflight_check, refused_model_reason
 from .config import HOME_VARIABLE, Config, ConfigError, adapter_enabled, default_config_path, load_config, \
     sandbox_redirect_detected
 from .executable_path import EXECUTABLE_INSIDE_PROJECT, inside_roots
@@ -80,6 +82,7 @@ class AdapterCheckReport:
     executable: Path | None
     executable_found: bool | None
     reasons: tuple[str, ...]
+    provider_checks: Any = None
 
     @property
     def ok(self):
@@ -121,7 +124,8 @@ def common_checks(repo, config_path=None):
     )
 
 
-def adapter_checks(config, adapter, repo_root=None, *, quota_state=None, check_codex_quota=True):
+def adapter_checks(config, adapter, repo_root=None, *, quota_state=None, check_codex_quota=True,
+                   model=None, providers=None):
     """Read-only per-adapter checks: enabled, executable lookup & location, subscription login, and codex quota."""
     reasons = []
     enabled = adapter_enabled(config, adapter) if config is not None else False
@@ -143,12 +147,19 @@ def adapter_checks(config, adapter, repo_root=None, *, quota_state=None, check_c
         else:
             reasons.extend(login_reasons(adapter, executable, cwd=query_cwd(config), quota_state=quota_state))
 
+    provider_checks = None
+    pcheck = preflight_check(adapter)
+    if pcheck is not None and config is not None and enabled:
+        provider_checks = pcheck(config, model=model, providers=providers)
+        reasons.extend(provider_checks.reasons)
+
     return AdapterCheckReport(
         adapter=adapter,
         enabled=enabled,
         executable=executable,
         executable_found=executable_found,
         reasons=tuple(reasons),
+        provider_checks=provider_checks,
     )
 
 
@@ -162,19 +173,38 @@ def preflight(repo, adapter, config_path=None, model=None):
     so the card is never proposed.
     """
     reasons = []
+    valid_model = False
     if model is not None:
         # The same full match card creation applies, so a padded or malformed ID is never reported ok.
         if not valid_id(TARGET_ID, model):
             reasons.append(INVALID_MODEL_ID.format(model=model))
         elif (refused := refused_model_reason(adapter, model)) is not None:
             reasons.append(refused)
+        else:
+            valid_model = True
 
     common = common_checks(repo, config_path)
     reasons.extend(common.reasons)
-    checked = adapter_checks(common.config, adapter, common.repo_root)
+    checked = adapter_checks(
+        common.config,
+        adapter,
+        common.repo_root,
+        model=model if valid_model else None,
+    )
     reasons.extend(checked.reasons)
+    billing = None
+    billing_notice = None
+    if model is not None and adapter != "openai-api":
+        billing = "subscription"
+    if checked.provider_checks is not None and (model is None or valid_model):
+        for p_report in checked.provider_checks.by_provider.values():
+            reasons.extend(p_report.reasons)
+        if valid_model and len(checked.provider_checks.by_provider) == 1:
+            p_report = next(iter(checked.provider_checks.by_provider.values()))
+            billing = p_report.billing
+            billing_notice = p_report.billing_notice
 
-    return {
+    report = {
         "repo_root": common.repo_root,
         "config_path": str(common.config_path),
         "config_found": common.config_found,
@@ -186,6 +216,10 @@ def preflight(repo, adapter, config_path=None, model=None):
         "ok": not reasons,
         "reasons": reasons,
     }
+    if adapter == "openai-api" or model is not None:
+        report["billing"] = billing
+        report["billing_notice"] = billing_notice
+    return report
 
 
 def require_unsandboxed_dispatch(state_dir):

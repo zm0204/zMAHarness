@@ -195,7 +195,7 @@ def load_config(path=None):
     limits = values["limits"]
     if limits["max_effort"] not in EFFORT_LEVELS:
         raise ConfigError("limits.max_effort 無效")
-    adapters = set(configurable_names()) | {"openai-api"}
+    adapters = set(configurable_names())
     enabled = values["adapters"]["enabled"]
     if any(adapter not in adapters for adapter in enabled) or len(set(enabled)) != len(enabled):
         raise ConfigError("adapters.enabled 有未知或重複的 Adapter")

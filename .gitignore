@@ -127,4 +127,6 @@
 !/tests/v2/fixtures/model_catalog/**
 !/mah/adapters/api_providers.py
 !/mah/adapters/api_transport.py
+!/mah/adapters/openai_api.py
 !/tests/v2/test_api_transport.py
+!/tests/v2/test_openai_api.py

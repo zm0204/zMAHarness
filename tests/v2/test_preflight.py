@@ -225,6 +225,119 @@ class PreflightTests(unittest.TestCase):
             cli.main(["preflight", "--repo", str(self.repo), "--adapter", "unknown-x"])
         self.assertEqual(exit_error.exception.code, 2)
 
+    def test_openai_api_preflight_provider_granularity_10061_vs_10013_and_billing(self):
+        from mah.adapters.api_transport import TransportResult
+        from mah.config import load_config
+        from mah.preflight import adapter_checks
+
+        # 1. Enabled without any provider -> Adapter-level reason, billing/billing_notice are None without --model
+        (self.home / "harness.local.toml").write_text(
+            '[adapters]\nenabled = ["openai-api"]\n', encoding="utf-8"
+        )
+        code, report = self.assert_read_only(self.repo, "--adapter", "openai-api")
+        self.assertEqual((code, report["ok"], report["billing"], report["billing_notice"]), (30, False, None, None))
+        self.assertTrue(any("尚未設定任何 provider" in r for r in report["reasons"]))
+
+        # 2. Two providers configured: lmstudio and ollama
+        (self.home / "harness.local.toml").write_text(
+            '[adapters]\nenabled = ["openai-api"]\n'
+            '[api.providers.lmstudio]\nkind = "lmstudio"\nbase_url = "http://127.0.0.1:1234/v1"\n'
+            'api_key_env = "TEST_PREFLIGHT_LMS_KEY"\n'
+            '[api.providers.ollama]\nkind = "ollama"\nbase_url = "http://127.0.0.1:11434/v1"\n',
+            encoding="utf-8",
+        )
+        cfg = load_config(self.home / "harness.local.toml")
+
+        # Missing API key env for lmstudio does not affect ollama in provider_checks
+        def fake_exec(provider, method, path, **kwargs):
+            if provider.name == "ollama":
+                return TransportResult(
+                    stage="done", termination="exited", launch_error=None, http_status=200,
+                    headers={"content-type": "application/json"},
+                    body=b'{"object":"list","data":[{"id":"qwen2.5:7b"}]}',
+                    response_too_large=False, redacted=False, error_detail=None, wall_milliseconds=5,
+                )
+            return TransportResult(
+                stage="connect", termination="not_started", launch_error="request_not_sent", http_status=None,
+                headers={}, body=b"", response_too_large=False, redacted=False,
+                error_detail={"stage": "connect", "type": "ConnectionRefusedError", "errno": 10061, "winerror": 10061, "message": "refused"},
+                wall_milliseconds=5,
+            )
+
+        with patch("mah.adapters.api_transport.execute_request", side_effect=fake_exec), patch.dict(
+            os.environ, {}, clear=False
+        ):
+            os.environ.pop("TEST_PREFLIGHT_LMS_KEY", None)
+            checked = adapter_checks(cfg, "openai-api", str(self.repo), providers=("lmstudio", "ollama"))
+        self.assertTrue(checked.ok)
+        self.assertFalse(checked.provider_checks.by_provider["lmstudio"].ok)
+        self.assertTrue(checked.provider_checks.by_provider["ollama"].ok)
+
+        # 3. 10061 (ConnectionRefusedError) is blocked both outside AND inside sandbox
+        refused_res = TransportResult(
+            stage="connect", termination="not_started", launch_error="request_not_sent", http_status=None,
+            headers={}, body=b"", response_too_large=False, redacted=False,
+            error_detail={"stage": "connect", "type": "ConnectionRefusedError", "errno": 10061, "winerror": 10061, "message": "refused"},
+            wall_milliseconds=5,
+        )
+        for in_sandbox in (False, True):
+            with self.subTest(err=10061, in_sandbox=in_sandbox), patch(
+                "mah.adapters.api_transport.execute_request", return_value=refused_res
+            ), patch("mah.config.sandbox_redirect_detected", return_value=in_sandbox), patch(
+                "mah.preflight.sandbox_redirect_detected", return_value=in_sandbox
+            ), patch.dict(os.environ, {"TEST_PREFLIGHT_LMS_KEY": "sk-ok-key"}):
+                rep = preflight(self.repo, "openai-api", self.home / "harness.local.toml", model="lmstudio:qwen")
+                self.assertFalse(rep["ok"])
+                self.assertEqual((rep["billing"], rep["billing_notice"]), ("local", None))
+                self.assertTrue(any("找不到本機模型伺服器（127.0.0.1:1234）" in r for r in rep["reasons"]))
+
+        # 4. 10013 (PermissionError / WSAEACCES) is allowed inside sandbox and blocked outside sandbox
+        denied_res = TransportResult(
+            stage="connect", termination="not_started", launch_error="request_not_sent", http_status=None,
+            headers={}, body=b"", response_too_large=False, redacted=False,
+            error_detail={"stage": "connect", "type": "PermissionError", "errno": 13, "winerror": 10013, "message": "denied"},
+            wall_milliseconds=5,
+        )
+        with patch("mah.adapters.api_transport.execute_request", return_value=denied_res), patch(
+            "mah.config.sandbox_redirect_detected", return_value=True
+        ), patch("mah.preflight.sandbox_redirect_detected", return_value=True), patch.dict(
+            os.environ, {"TEST_PREFLIGHT_LMS_KEY": "sk-ok-key"}
+        ):
+            rep_sb = preflight(self.repo, "openai-api", self.home / "harness.local.toml", model="lmstudio:qwen")
+            self.assertTrue(rep_sb["ok"])
+            self.assertTrue(rep_sb["needs_unsandboxed_dispatch"])
+            self.assertEqual((rep_sb["billing"], rep_sb["billing_notice"]), ("local", None))
+
+        with patch("mah.adapters.api_transport.execute_request", return_value=denied_res), patch(
+            "mah.config.sandbox_redirect_detected", return_value=False
+        ), patch("mah.preflight.sandbox_redirect_detected", return_value=False), patch.dict(
+            os.environ, {"TEST_PREFLIGHT_LMS_KEY": "sk-ok-key"}
+        ):
+            rep_outside = preflight(self.repo, "openai-api", self.home / "harness.local.toml", model="lmstudio:qwen")
+            self.assertFalse(rep_outside["ok"])
+
+        # 5. Model missing from /v1/models vs present
+        models_res = TransportResult(
+            stage="done", termination="exited", launch_error=None, http_status=200,
+            headers={"content-type": "application/json"},
+            body=b'{"object":"list","data":[{"id":"qwen2.5-7b-instruct"}]}',
+            response_too_large=False, redacted=False, error_detail=None, wall_milliseconds=5,
+        )
+        with patch("mah.adapters.api_transport.execute_request", return_value=models_res), patch.dict(
+            os.environ, {"TEST_PREFLIGHT_LMS_KEY": "sk-ok-key"}
+        ):
+            rep_missing = preflight(
+                self.repo, "openai-api", self.home / "harness.local.toml", model="lmstudio:other-model"
+            )
+            self.assertFalse(rep_missing["ok"])
+            self.assertTrue(any("other-model" in r for r in rep_missing["reasons"]))
+
+            rep_found = preflight(
+                self.repo, "openai-api", self.home / "harness.local.toml", model="lmstudio:qwen2.5-7b-instruct"
+            )
+            self.assertTrue(rep_found["ok"])
+            self.assertEqual((rep_found["billing"], rep_found["billing_notice"]), ("local", None))
+
 
 class GitClassificationTests(unittest.TestCase):
     """Only a certain cause gets its own advice; anything else is reported as a Git failure."""

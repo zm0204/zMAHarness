@@ -88,10 +88,10 @@ class DummyAdapter:
 
 class RegistryTableTests(unittest.TestCase):
     def test_configurable_names_equal_the_old_adapter_list(self):
-        self.assertEqual(set(registry.configurable_names()), OLD_ADAPTERS | {"claude-print"})
+        self.assertEqual(set(registry.configurable_names()), OLD_ADAPTERS | {"claude-print", "openai-api"})
         self.assertIn("fake", registry.ADAPTER_POLICIES)
         self.assertNotIn("fake", registry.configurable_names())
-        self.assertEqual(set(registry.ADAPTER_POLICIES), OLD_ADAPTERS | {"fake", "claude-print"})
+        self.assertEqual(set(registry.ADAPTER_POLICIES), OLD_ADAPTERS | {"fake", "claude-print", "openai-api"})
 
     def test_every_flag_matches_the_old_name_comparison(self):
         flags = [field.name for field in fields(AdapterPolicy) if field.name != "run_id_prefix"]
@@ -99,10 +99,20 @@ class RegistryTableTests(unittest.TestCase):
         for name in (*registry.ADAPTER_POLICIES, "unknown-x"):
             for flag in flags:
                 with self.subTest(adapter=name, flag=flag):
-                    self.assertIs(getattr(registry.policy_for(name), flag), name in OLD_NAME_CHECKS[flag] or (
-                        name in ("claude-print", "codex-exec") and flag in {
-                            "user_configurable", "requires_dispatch_scope", "attended_approval_only",
-                            "template_verified"}))
+                    expected = (
+                        name in OLD_NAME_CHECKS[flag]
+                        or (
+                            name in ("claude-print", "codex-exec", "openai-api")
+                            and flag in {
+                                "user_configurable",
+                                "requires_dispatch_scope",
+                                "attended_approval_only",
+                                "template_verified",
+                            }
+                        )
+                        or (name == "openai-api" and flag in {"refunds_unstarted_process", "closes_grant_on_refund"})
+                    )
+                    self.assertIs(getattr(registry.policy_for(name), flag), expected)
 
     def test_unregistered_names_fall_back_to_the_default_policy(self):
         self.assertFalse(registry.is_registered("unknown-x"))
@@ -113,11 +123,11 @@ class RegistryTableTests(unittest.TestCase):
         self.assertFalse(registry.has_factory("unknown-x"))
 
     def test_only_agy_print_has_a_factory_capture_check_and_run_prefix(self):
-        self.assertEqual(registry.dispatchable_names(), ("agy-print", "claude-print", "codex-exec"))
-        self.assertEqual(set(registry.CAPTURE_CHECKS), {"agy-print", "claude-print", "codex-exec"})
+        self.assertEqual(registry.dispatchable_names(), ("agy-print", "claude-print", "codex-exec", "openai-api"))
+        self.assertEqual(set(registry.CAPTURE_CHECKS), {"agy-print", "claude-print", "codex-exec", "openai-api"})
         self.assertEqual(registry.policy_for("agy-print").run_id_prefix, "agy")
         self.assertEqual({name for name, policy in registry.ADAPTER_POLICIES.items() if policy.run_id_prefix},
-                         {"agy-print", "claude-print", "codex-exec"})
+                         {"agy-print", "claude-print", "codex-exec", "openai-api"})
 
     def test_agy_print_satisfies_the_protocol(self):
         self.assertIsInstance(AgyPrintAdapter(None), Adapter)
@@ -164,7 +174,7 @@ class UnknownAdapterErrorTests(unittest.TestCase):
     def test_cli_adapter_choices_are_unchanged(self):
         action = next(action for action in cli.parser()._subparsers._group_actions[0].choices["dispatch"]._actions
                       if action.dest == "adapter")
-        self.assertEqual(action.choices, ("agy-print", "claude-print", "codex-exec"))
+        self.assertEqual(action.choices, ("agy-print", "claude-print", "codex-exec", "openai-api"))
         self.write_config()
         with self.assertRaises(SystemExit) as exit_error:
             self.main("dispatch", "--grant", "g", "--template", "review", "--adapter", "unknown-x",
@@ -312,7 +322,7 @@ class DummyAdapterRegistrationTests(unittest.TestCase):
         self.assertFalse(registry.is_registered("test-dummy"))
         self.assertFalse(registry.has_factory("test-dummy"))
         self.assertIsNone(registry.capture_check("test-dummy"))
-        self.assertEqual(registry.dispatchable_names(), ("agy-print", "claude-print", "codex-exec"))
+        self.assertEqual(registry.dispatchable_names(), ("agy-print", "claude-print", "codex-exec", "openai-api"))
 
 
 class RefundCaptureKeyTests(unittest.TestCase):
