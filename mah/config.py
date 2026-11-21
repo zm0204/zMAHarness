@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import tomllib
 
+from .adapters.api_providers import parse_providers
 from .adapters.registry import configurable_names
 from .ledger import BRAND_NAME, EFFORT_LEVELS, Limits
 
@@ -12,6 +13,7 @@ DEFAULTS = {
     "paths": {"state_dir": "state", "worktree_root": "worktrees", "gui_workspace_root": "gui"},
     "adapters": {"enabled": ["codex-exec", "gui-terra", "agy-print", "claude-print"], "codex_command": "codex",
                  "agy_command": "agy", "claude_command": "claude"},
+    "api": {"max_output_tokens": 8192, "connect_timeout_s": 10},
     "approval": {"mode": "codex_prompt", "grant_ttl_minutes": 240},
     "controller": {"light_models": [], "suggested_controller": "Codex Sol High"},
     "limits": {"max_dispatches_per_grant": 5, "max_concurrency": 1, "max_effort": "high",
@@ -141,6 +143,10 @@ def _merge(defaults, supplied, prefix=""):
         elif isinstance(value, int):
             if name == "triggers.t4_codex_used_percent":
                 valid = 0 <= value <= 100
+            elif name == "api.connect_timeout_s":
+                valid = 1 <= value <= 60
+            elif name == "api.max_output_tokens":
+                valid = 1 <= value <= 65536
             else:
                 # 0 disables mah cleanup --apply; every other count must be positive.
                 valid = value >= 0 if name == "privacy.retain_run_dirs_days" else value > 0
@@ -174,27 +180,49 @@ def load_config(path=None):
     except (OSError, ValueError) as exc:
         raise ConfigError("無法讀取設定檔，請檢查 UTF-8 與 TOML 語法") from exc
 
-    values = _merge(DEFAULTS, supplied)
+    raw_providers = None
+    supplied_for_merge = supplied
+    if isinstance(supplied, dict) and "api" in supplied:
+        if type(supplied["api"]) is not dict:
+            raise ConfigError("api 必須是 TOML 表格")
+        api_copy = dict(supplied["api"])
+        raw_providers = api_copy.pop("providers", None)
+        supplied_for_merge = dict(supplied, api=api_copy)
+
+    values = _merge(DEFAULTS, supplied_for_merge)
     if values["approval"]["mode"] not in ("manual_cli", "codex_prompt"):
         raise ConfigError("approval.mode 須為 manual_cli 或 codex_prompt")
     limits = values["limits"]
     if limits["max_effort"] not in EFFORT_LEVELS:
         raise ConfigError("limits.max_effort 無效")
-    adapters = set(configurable_names())
+    adapters = set(configurable_names()) | {"openai-api"}
     enabled = values["adapters"]["enabled"]
     if any(adapter not in adapters for adapter in enabled) or len(set(enabled)) != len(enabled):
         raise ConfigError("adapters.enabled 有未知或重複的 Adapter")
     for template, defaults in values["defaults"].items():
+        if defaults["adapter"] == "openai-api":
+            raise ConfigError(f"defaults.{template} 的 Adapter 不得設為 openai-api")
         if defaults["adapter"] not in adapters or defaults["effort"] not in EFFORT_LEVELS:
             raise ConfigError(f"defaults.{template} 的 Adapter 或思考程度無效")
         if (defaults["adapter"] != DEFAULTS["defaults"][template]["adapter"]
                 and "model" not in supplied.get("defaults", {}).get(template, {})):
             defaults["model"] = ""
+    warnings = ["limits.max_concurrency 已固定為 1"] if limits["max_concurrency"] > 1 else []
+    if "openai-api" in enabled:
+        values["api"]["providers"] = parse_providers(raw_providers, api_defaults=values["api"])
+    else:
+        values["api"]["providers"] = {}
+        if raw_providers is not None and (type(raw_providers) is not dict or len(raw_providers) > 0):
+            try:
+                parse_providers(raw_providers, api_defaults=values["api"])
+            except ConfigError as exc:
+                warnings.append(f"openai-api 未啟用，已略過 api.providers 設定（{exc}）")
+            else:
+                warnings.append("openai-api 未啟用，已略過 api.providers 設定")
     for name, value in values["paths"].items():
         resolved = (config_path.parent / Path(value).expanduser()).resolve()
         values["paths"][name] = _local_path(resolved, f"paths.{name}") if name != "gui_workspace_root" else resolved
-    config = Config(config_path, values, ("limits.max_concurrency 已固定為 1",)
-                    if limits["max_concurrency"] > 1 else ())
+    config = Config(config_path, values, tuple(warnings))
     limits["max_concurrency"] = 1
     database = config.database
     if database.resolve() != database or database.is_symlink():
