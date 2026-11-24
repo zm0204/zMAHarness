@@ -305,6 +305,16 @@ class CliTests(unittest.TestCase):
                 self.check(2, "grant", "list")
                 self.assertFalse(self.database.exists())
 
+    def test_card_create_refuses_bare_agy_orchestrator_id(self):
+        with self.config.open("a", encoding="utf-8") as settings:
+            settings.write('\n[adapters]\nenabled = ["agy-print"]\n')
+        for model in ("gemini-pro-orchestrator", "Gemini-Pro-Orchestrator"):
+            with self.subTest(model=model):
+                target = {"adapter": "agy-print", "model": model, "effort_max": "high"}
+                result = self.check(2, "card", "create", "--file", self.card(allowed_targets=[target]))
+                self.assertIn(f"Orchestrator 模型 {model}", result.stderr)
+                self.check(2, "card", "show", "demo-1")
+
     def test_invalid_card_and_missing_trigger_return_usage_error(self):
         self.check(2, "card", "create", "--file", self.card(trigger_ids=[]))
         self.card_file.write_text('{"card_id":"one","card_id":"two"}', encoding="utf-8")

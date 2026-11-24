@@ -10,9 +10,10 @@ from .base import AdapterPolicy
 
 DEFAULT_POLICY = AdapterPolicy()
 
-# agy 1.5.12 lists Orchestrator models that start their own subagents. Whether the --settings deny rules
+# agy lists Orchestrator models that start their own subagents. Whether the --settings deny rules
 # also bind those subagents has not been verified, so the read-only guarantee cannot be claimed for them.
-AGY_ORCHESTRATOR_PREFIX = "gemini-pro-orchestrator-"
+# No trailing hyphen: agy 1.5.14 added the bare ID "gemini-pro-orchestrator" (Orchestrator (Carbon)).
+AGY_ORCHESTRATOR_PREFIX = "gemini-pro-orchestrator"
 AGY_ORCHESTRATOR_REASON = ("agy-print 不接受 Orchestrator 模型 {model}：Orchestrator 會自行派出子代理，"
                            "--settings 的 deny 規則能否約束這些子代理尚未驗證，無法保證唯讀。"
                            "請改用一般 Gemini 模型（例如 gemini-4-neon-high）。")

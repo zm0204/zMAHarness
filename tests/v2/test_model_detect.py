@@ -29,6 +29,7 @@ from mah.model_detect import (
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "model_catalog"
 AGY_FIXTURE = (FIXTURES / "agy-1.5.12-models-redacted.txt").read_bytes()
 CODEX_FIXTURE = (FIXTURES / "codex-0.169.0-debug-models-redacted.json").read_bytes()
+AGY_1_5_14_FIXTURE = (FIXTURES.parent / "agy-1.5.14-models-redacted.txt").read_bytes()
 
 
 def _completed(returncode=0, stdout=b"", stderr=b""):
@@ -243,6 +244,28 @@ class DetectionCacheAndModelsReportTests(unittest.TestCase):
         )
         # Codex efforts intersect with CODEX_EFFORTS and max_effort=high.
         self.assertEqual(by_key["gpt-6.1-terra"]["routes"][0]["efforts"], ["low", "medium", "high"])
+
+    def test_models_report_shows_agy_1_5_14_bare_orchestrator_as_refused(self):
+        def fake_run(argv, **kwargs):
+            if argv[1:] == ["models"]:
+                return _completed(0, stdout=AGY_1_5_14_FIXTURE, stderr=b"Fetching available models...\n")
+            if argv[1:] == ["debug", "models"]:
+                return _completed(0, stdout=CODEX_FIXTURE)
+            raise AssertionError(f"unexpected subprocess: {argv}")
+
+        with (patch("mah.model_detect.subprocess.run", side_effect=fake_run),
+              patch("mah.model_detect.claude_login_reasons", return_value=[])):
+            report = models_report(self.config, include_all=True)
+
+        agy = report["detection"]["agy-print"]
+        self.assertEqual((agy["status"], agy["detected_count"]), ("ok", 27))
+        self.assertNotIn("gemini-pro-orchestrator", agy["unclassified"])
+        self.assertEqual(agy["unclassified"], ["gemini-4-carbon-medium", "gemini-4-carbon-high",
+                                               "gemini-4-carbon-low", "gpt-oss-120b-medium"])
+        orchestrator = {item["key"]: item for item in report["models"]}["gemini-pro-orchestrator"]
+        self.assertEqual((orchestrator["status"], orchestrator["available"]), ("refused", False))
+        self.assertEqual(orchestrator["routes"][0]["matched_ids"],
+                         ["gemini-pro-orchestrator-neon", "gemini-pro-orchestrator", "gemini-pro-orchestrator-argon"])
 
     def test_cli_mah_models_reads_claude_observed_and_never_writes_ledger(self):
         state_dir = self.config.database.parent

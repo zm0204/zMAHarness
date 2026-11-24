@@ -459,5 +459,51 @@ class RefusedModelRegistrationTests(unittest.TestCase):
                          registry.AGY_ORCHESTRATOR_REASON.replace("{model}", model))
 
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+# Raw `agy models` stdout: one "<model id>\t<display name>" row per model.
+AGY_MODEL_LISTS = {
+    "1.5.12": FIXTURES / "model_catalog" / "agy-1.5.12-models-redacted.txt",
+    "1.5.14": FIXTURES / "agy-1.5.14-models-redacted.txt",
+}
+
+
+def _agy_model_rows(path):
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            model, display = line.split("\t", 1)
+            rows.append((model, display))
+    return rows
+
+
+class AgyOrchestratorRefusalTests(unittest.TestCase):
+    def test_bare_suffixed_and_mixed_case_orchestrator_ids_are_refused(self):
+        for model in ("gemini-pro-orchestrator", "gemini-pro-orchestrator-argon", "gemini-pro-orchestrator-neon",
+                      "Gemini-Pro-Orchestrator", "GEMINI-PRO-ORCHESTRATOR-ARGON", "gemini-Pro-orchestrator-Neon"):
+            with self.subTest(model=model):
+                self.assertEqual(registry.refused_model_reason("agy-print", model),
+                                 registry.AGY_ORCHESTRATOR_REASON.replace("{model}", model))
+
+    def test_ordinary_gemini_models_are_not_refused(self):
+        for model in ("gemini-4-neon-high", "gemini-4-carbon-high", "gemini-pro-neon"):
+            with self.subTest(model=model):
+                self.assertIsNone(registry.refused_model_reason("agy-print", model))
+
+    def test_every_orchestrator_listed_by_agy_is_refused_and_nothing_else(self):
+        # Keyed on the display name, so a future rename of an Orchestrator ID still fails this test.
+        for version, path in AGY_MODEL_LISTS.items():
+            rows = _agy_model_rows(path)
+            orchestrators = [model for model, display in rows if "orchestrator" in display.lower()]
+            with self.subTest(version=version):
+                self.assertTrue(orchestrators, f"agy {version} fixture lists no Orchestrator model")
+            for model, display in rows:
+                with self.subTest(version=version, model=model, display=display):
+                    reason = registry.refused_model_reason("agy-print", model)
+                    if model in orchestrators:
+                        self.assertIsNotNone(reason)
+                    else:
+                        self.assertIsNone(reason)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -179,7 +179,8 @@ class PreflightTests(unittest.TestCase):
 
     def test_orchestrator_model_is_not_ok_for_agy(self):
         self.write_config()
-        for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro"):
+        for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro",
+                      "gemini-pro-orchestrator", "gemini-pro-orchestrator-argon"):
             with self.subTest(model=model):
                 code, report = self.assert_read_only(self.repo, "--adapter", "agy-print", "--model", model)
                 self.assertEqual((code, report["ok"]), (30, False))

@@ -68,7 +68,7 @@ display = "Orchestrator"
 family = "gemini"
 status = "refused"
 billing = "subscription"
-routes = [{ adapter = "agy-print", prefix = "gemini-pro-orchestrator-", quota = "agy:gemini" }]
+routes = [{ adapter = "agy-print", prefix = "gemini-pro-orchestrator", quota = "agy:gemini" }]
 note = "會自行派出子代理，deny 規則能否約束子代理未驗證。拒絕由 registry 執行，這裡只讓 mah models 顯示為 refused。"
 
 # ───────────── Claude ─────────────

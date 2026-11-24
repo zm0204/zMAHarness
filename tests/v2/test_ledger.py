@@ -105,7 +105,8 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.count("cards"), 0)
 
     def test_agy_orchestrator_card_is_refused_before_it_is_stored(self):
-        for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro", "Gemini-Pro-Orchestrator-Neon"):
+        for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro", "Gemini-Pro-Orchestrator-Neon",
+                      "gemini-pro-orchestrator", "Gemini-Pro-Orchestrator", "gemini-pro-orchestrator-argon"):
             with self.subTest(model=model):
                 with self.assertRaises(LedgerError) as failure:
                     self.make_card(allowed_targets=[{"adapter": "agy-print", "model": model, "effort_max": "high"}])

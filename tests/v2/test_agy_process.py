@@ -682,7 +682,7 @@ class AgyProcessTests(unittest.TestCase):
     def test_orchestrator_model_is_refused_before_probe_reservation_or_launch(self):
         with patch.object(self.adapter, "probe", side_effect=AssertionError("must not probe")), patch(
                 "mah.adapters.agy_print.Popen", side_effect=AssertionError("must not start a model")):
-            for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro"):
+            for model in ("gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-g1-pro", "gemini-pro-orchestrator"):
                 with self.subTest(model=model), self.assertRaises(LedgerError) as error:
                     self.manager.dispatch(
                         self.adapter, grant_id=self.grant, run_id=self.run, repo_root=self.repo, template="review",
