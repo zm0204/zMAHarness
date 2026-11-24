@@ -91,8 +91,17 @@ class SnapshotHeadTests(WorkerFixture, unittest.TestCase):
         self.assertIn("snapshot_head", str(error))
         run = self.ledger.get_run(self.run_id)
         self.assertEqual((run["state"], run["state_reason"]), ("CANCELLED", "cancelled_before_launch"))
-        self.assertEqual(self.ledger.get_grant(self.grant_id)["used_dispatches"], 0)
+        grant = self.ledger.get_grant(self.grant_id)
+        self.assertEqual((grant["used_dispatches"], grant["status"]), (0, "CLOSED"))
         self.assertFalse((self.directory() / "invocation.json").exists())
+        with self.assertRaises(LedgerError) as retry_error:
+            self.ledger.check_and_reserve(
+                self.grant_id, f"retry-{uuid4().hex}", repo_root=self.repo, template="review",
+                adapter=self.adapter_name, model=self.model, effort="low",
+                workspace_kind="disposable_worktree", workspace_path=self.workspace,
+                task_sha256=sha256(self.task).hexdigest(), timeout_seconds=30,
+            )
+        self.assertEqual(retry_error.exception.code, 12)
 
     def test_old_card_without_the_field_still_dispatches(self):
         view = self.dispatch()

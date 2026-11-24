@@ -428,3 +428,43 @@ class RunManagerTests(unittest.TestCase):
         self.assertEqual(self.state_of(run), "CANCELLED")
         self.assertEqual(self.ledger.get_run(run)["state_reason"], "gui_not_submitted")
         self.assertEqual(self.debit(), 0)
+        self.assertEqual(self.ledger.get_grant(self.grant)["status"], "CLOSED")
+
+    def test_keyboard_interrupt_in_prepare_cancels_and_closes_single_dispatch_grant(self):
+        from types import SimpleNamespace
+
+        digest = self.ledger.create_card(
+            "interrupt-card", repo_root=self.state, task_key="interrupt", trigger_ids=["T2"],
+            prepare_mode="card", allowed_templates=["review"],
+            allowed_targets=[{"adapter": "legacy-fixture", "model": "fixture", "effort_max": "low"}],
+            max_dispatches=1, ttl_minutes=10,
+        )
+        grant = self.ledger.approve("interrupt-card", digest, via="manual_cli")
+        run_id = f"review-{uuid4().hex}"
+        adapter = SimpleNamespace(
+            id="legacy-fixture",
+            manager=self.manager,
+            prepare_invocation=lambda **_kwargs: SimpleNamespace(
+                workspace_kind="read_only", cwd=self.state, timeout_s=None
+            ),
+        )
+        with patch.object(self.manager, "prepare", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.manager.dispatch(
+                    adapter, grant_id=grant, run_id=run_id, repo_root=self.state,
+                    template="review", model="fixture", effort="low", task=TASK,
+                    workspace=self.state, worktree_root=self.state,
+                )
+        run = self.ledger.get_run(run_id)
+        self.assertEqual((run["state"], run["state_reason"], run["dispatch_consumed"]),
+                         ("CANCELLED", "cancelled_before_launch", 0))
+        grant_row = self.ledger.get_grant(grant)
+        self.assertEqual((grant_row["used_dispatches"], grant_row["status"]), (0, "CLOSED"))
+        with self.assertRaises(LedgerError) as error:
+            self.ledger.check_and_reserve(
+                grant, f"review-{uuid4().hex}", repo_root=self.state, template="review",
+                adapter="legacy-fixture", model="fixture", effort="low",
+                workspace_kind="read_only", workspace_path=self.state,
+                task_sha256=sha256(TASK).hexdigest(),
+            )
+        self.assertEqual(error.exception.code, 12)

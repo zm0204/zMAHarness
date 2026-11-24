@@ -581,13 +581,15 @@ class AgyProcessTests(unittest.TestCase):
 
         for enable_credits in (False, True):
             with self.subTest(enable_credits=enable_credits):
+                self.grant = self.make_grant(timeout=60, workspace=self.workspace, task_sha=sha256(task).hexdigest())
                 self.run = f"agy-{uuid4().hex}"
                 with patch.object(self.adapter, "launch", side_effect=loosen), patch(
                         "mah.adapters.agy_print.Popen", side_effect=AssertionError("must not launch")):
                     with self.assertRaisesRegex(LedgerError, "session settings"):
                         self.dispatch_bundle(task)
                 self.assertEqual(self.ledger.get_run(self.run)["state"], "CANCELLED")
-                self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 0)
+                grant = self.ledger.get_grant(self.grant)
+                self.assertEqual((grant["used_dispatches"], grant["status"]), (0, "CLOSED"))
 
     def test_bundle_does_not_remove_explicit_tool_evidence_requirements(self):
         task = self.prepare_bundle_case()
@@ -891,7 +893,8 @@ class AgyProcessTests(unittest.TestCase):
         with patch("mah.adapters.agy_print.Popen", side_effect=FileNotFoundError(2, "synthetic")):
             view = self.run_dispatch()
         self.assertEqual((view["state"], view["state_reason"]), ("FAILED_PRE_SUBMIT", "process_not_started"))
-        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 0)
+        grant = self.ledger.get_grant(self.grant)
+        self.assertEqual((grant["used_dispatches"], grant["status"]), (0, "CLOSED"))
 
     def test_child_exit_without_submission_is_unknown(self):
         self.grant = self.make_grant("interrupted")

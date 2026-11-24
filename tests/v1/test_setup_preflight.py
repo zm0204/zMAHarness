@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @unittest.skipUnless(os.name == "nt", "setup.ps1 requires Windows")
 class SetupPreflightTests(unittest.TestCase):
     def run_without_python(self, *, store_alias=False, script="setup.ps1"):
-        with tempfile.TemporaryDirectory(prefix="mah-setup-", dir=ROOT.parent) as temporary:
+        with tempfile.TemporaryDirectory(prefix="mah-setup-中文-") as temporary:
             root = Path(temporary)
             checkout = root / "checkout"
             (checkout / "config").mkdir(parents=True)
@@ -37,11 +37,17 @@ class SetupPreflightTests(unittest.TestCase):
             source = str(checkout / script).replace("'", "''")
             output = str(output_file).replace("'", "''")
             invoke = "& '" + source + "' *>&1 | Out-File -LiteralPath '" + output + "' -Encoding UTF8"
-            result = subprocess.run(
-                [str(powershell), "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-Command", invoke],
-                cwd=checkout, env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+            console_file = root / "console.txt"
+            with console_file.open("wb") as console:
+                result = subprocess.run(
+                    [str(powershell), "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-Command", invoke],
+                    cwd=checkout, env=environment, stdout=console, stderr=subprocess.STDOUT, timeout=30,
+                )
+            message = (
+                output_file.read_text(encoding="utf-8-sig")
+                if output_file.exists()
+                else console_file.read_text(encoding="utf-8", errors="replace")
             )
-            message = output_file.read_text(encoding="utf-8-sig") if output_file.exists() else result.stdout + result.stderr
             self.assertNotEqual(result.returncode, 0, message)
             self.assertFalse((checkout / ".local").exists(), message)
             self.assertFalse((root / "appdata" / "zMAHarness").exists())

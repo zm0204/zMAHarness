@@ -516,19 +516,25 @@ class GrantLedger:
             (run["grant_id"],),
         ).rowcount:
             raise LedgerError(20, "Run debit could not be returned")
+        expire_grants(db, now)
         detail = {"refund": refund, "reason": reason} | (evidence or {})
+        if refund:
+            grant = db.execute("SELECT max_dispatches FROM grants WHERE grant_id = ?", (run["grant_id"],)).fetchone()
+            if (
+                grant is not None
+                and (grant["max_dispatches"] == 1 or policy_for(run["adapter"]).closes_grant_on_refund)
+                and db.execute(
+                    """UPDATE grants SET status = 'CLOSED'
+                       WHERE grant_id = ? AND status = 'ACTIVE'""",
+                    (run["grant_id"],),
+                ).rowcount
+            ):
+                detail["grant_closed"] = True
         if exit_code is not None:
             detail["exit_code"] = exit_code
         if result_sha256 is not None:
             detail["result_sha256"] = result_sha256
         event(db, run_id, now, expected, state, detail)
-        expire_grants(db, now)
-        if refund and policy_for(run["adapter"]).closes_grant_on_refund:
-            db.execute(
-                """UPDATE grants SET status = 'CLOSED'
-                   WHERE grant_id = ? AND status = 'ACTIVE'""",
-                (run["grant_id"],),
-            )
         if state in TERMINAL_STATES and not refund:
             db.execute(
                 """UPDATE grants SET status = 'EXHAUSTED'

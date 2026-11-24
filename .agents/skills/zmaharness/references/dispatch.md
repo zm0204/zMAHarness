@@ -32,6 +32,9 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
 可以直接執行 `python -B -m mah resolve <run_id> --mark-failed` 收尾，再請使用者決定要不要重新提議。
 `dispatch` 回傳 `14` 且訊息說明派工必須在沙盒外執行時，這次沒有建立 Run，也沒有消耗 Grant。
 依主控平台的機制請求沙盒外執行後重試一次；被拒絕就回報原因，由主控 Agent 自己繼續原任務。不得自動重試第二次。
+`dispatch` 回傳 `20` 且狀態是 `FAILED_PRE_SUBMIT`，或回報 `CANCELLED` 時，代表 Worker 沒有送出、沒有費用；這張單次 Grant 已關閉。
+把原因告訴使用者並暫停。失敗回報以原卡片的格式（同一任務、範圍、模型、授權限制）呈現選項：`不同意（由主控自己繼續）`／`修好後重試（同一範圍）`。
+使用者回覆重試後，在下一輪 `card create`（新卡）→ `grant approve` → `dispatch`。
 `verify` 停在 `pending` 且無法補齊（例如 Worker 回傳 `partial`、缺少 `-o` 結果檔或結果無效）時，Run 會停在 `COLLECTING`，
 之後的派工都會以結束碼 13 擋住。查核後用 `python -B -m mah resolve <run_id> --mark-failed --reason "<原因>"` 收尾，
 `--reason` 必填並寫入帳本；已驗收通過的結果不能這樣標記（結束碼 30），請重跑 `verify`。
@@ -63,7 +66,7 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
      其他情況沿用卡片核准的任務類型與範圍。
 2. 在顯示對話卡後的下一輪，收到使用者回覆才以 `card create` 建立單次卡片。綁定儲存庫、模板、Adapter、模型、
    effort 上限、實際任務 SHA-256、工作目錄、逾時及期限。Disposable Worktree 卡片一律填入 `worktree create` 輸出的
-   `snapshot_head`（Context-Bundle 卡片不填）；核准後工作樹被切到其他提交時，派工會在啟動前以結束碼 10 拒絕並退回額度。
+   `snapshot_head`（Context-Bundle 卡片不填）；核准後工作樹被切到其他提交時，派工會在啟動前以結束碼 10 拒絕，退回額度並關閉 Grant；重派需使用者回覆後重新出卡。
    主控 Agent 取得完整卡片 SHA-256
    並執行 `grant approve <card_id> --sha <完整 SHA-256> --via codex_prompt`。
    回傳 10 且訊息說明 `approval.mode = "manual_cli"` 時，停止腳本，把完整的 `grant approve ... --via manual_cli` 指令交給使用者
@@ -71,7 +74,7 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
    卡片 JSON 省略 `timeout_seconds`，由模板套用安全上限。Review 和 Second Opinion 為 900 秒，
    Research 為 1200 秒。
    這筆帳本紀錄對應使用者對卡片的決定。超出該回覆同意的範圍時須提出新的建議。
-3. 核對 Grant 有效且未使用，使用 `dispatch` 送出一筆符合範圍的唯讀分析。
+3. 核對 Grant 有效且未使用（退款關閉的 Grant 是 `CLOSED`，不可重用），使用 `dispatch` 送出一筆符合範圍的唯讀分析。
    省略 `--timeout`，讓本機 Python 在單次 `mah dispatch` 中按核准的模板上限阻塞等待（Claude Code 主控以背景執行，見上方注意事項），
    由同一程序處理存活、逾時、日誌及結果收集。嚴禁主控 Agent 反覆呼叫 `mah status` 輪詢進度。
    若有可平行的本地工作，僅在完成後單次讀取原命令的結果。回傳 `SUBMISSION_UNKNOWN` 時保留收據，

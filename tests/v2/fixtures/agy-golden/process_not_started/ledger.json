@@ -27,7 +27,7 @@
    "max_concurrency": 1,
    "max_dispatches": 1,
    "repo_root": "c:\\zmah-golden\\repo",
-   "status": "ACTIVE",
+   "status": "CLOSED",
    "superseded_by": null,
    "used_dispatches": 0
   }
@@ -62,7 +62,7 @@
   },
   {
    "actor": "mah",
-   "detail_json": "{\"agy_capture_sha256\":\"7e43181c17dbc2bed96aab9506834e979c061b58e3ba755feeb6f928b29cf8ed\",\"reason\":\"process_not_started\",\"refund\":true}",
+   "detail_json": "{\"agy_capture_sha256\":\"7e43181c17dbc2bed96aab9506834e979c061b58e3ba755feeb6f928b29cf8ed\",\"grant_closed\":true,\"reason\":\"process_not_started\",\"refund\":true}",
    "from_state": "LAUNCHING",
    "id": 4,
    "run_id": "agy-00000000000000000000000000000003",

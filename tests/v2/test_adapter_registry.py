@@ -367,7 +367,8 @@ class RefundCaptureKeyTests(unittest.TestCase):
         self.refund(run_id, {key: "a" * 64})
         run = self.ledger.get_run(run_id)
         self.assertEqual((run["state"], run["dispatch_consumed"]), ("FAILED_PRE_SUBMIT", 0))
-        self.assertEqual(self.ledger.get_grant(grant_id)["used_dispatches"], 0)
+        grant = self.ledger.get_grant(grant_id)
+        self.assertEqual((grant["used_dispatches"], grant["status"]), (0, "CLOSED"))
 
     def assert_refused(self, adapter, evidence):
         run_id, grant_id = self.launching(adapter)

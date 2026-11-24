@@ -209,9 +209,105 @@ class LedgerTests(unittest.TestCase):
             20, self.ledger.transition, run, "LAUNCHING", "FAILED_PRE_SUBMIT", reason="blocked_by_policy"
         )
         self.ledger.transition(run, "LAUNCHING", "FAILED_PRE_SUBMIT", reason="auth_missing")
-        self.assertEqual(self.ledger.get_grant(grant)["used_dispatches"], 0)
+        grant_row = self.ledger.get_grant(grant)
+        self.assertEqual(grant_row["used_dispatches"], 0)
+        self.assertEqual(grant_row["status"], "CLOSED")
         self.assertEqual(self.ledger.get_run(run)["dispatch_consumed"], 0)
-        self.assertNotEqual(self.reserve(grant), run)
+        self.assert_code(12, self.reserve, grant)
+        with closing(sqlite3.connect(self.database)) as db:
+            detail = json.loads(
+                db.execute(
+                    "SELECT detail_json FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+                    (run,),
+                ).fetchone()[0]
+            )
+        self.assertTrue(detail["grant_closed"])
+
+    def test_multi_dispatch_grant_remains_active_after_refund(self):
+        grant = self.approve(max_dispatches=2)
+        run = self.reserve(grant)
+        self.launch(run)
+        self.ledger.transition(run, "LAUNCHING", "FAILED_PRE_SUBMIT", reason="auth_missing")
+        grant_row = self.ledger.get_grant(grant)
+        self.assertEqual(grant_row["used_dispatches"], 0)
+        self.assertEqual(grant_row["status"], "ACTIVE")
+        with closing(sqlite3.connect(self.database)) as db:
+            detail = json.loads(
+                db.execute(
+                    "SELECT detail_json FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+                    (run,),
+                ).fetchone()[0]
+            )
+        self.assertNotIn("grant_closed", detail)
+        second = self.reserve(grant)
+        self.assertNotEqual(second, run)
+        self.ledger.transition(second, "RESERVED", "CANCELLED")
+        self.assertEqual(self.ledger.get_grant(grant)["status"], "ACTIVE")
+        self.assertEqual(self.ledger.get_grant(grant)["used_dispatches"], 0)
+
+    def test_single_dispatch_grant_closes_on_cancel_and_old_card_cannot_reapprove(self):
+        digest = self.make_card("card-cancel", max_dispatches=1)
+        grant = self.ledger.approve("card-cancel", digest, via="manual_cli")
+        run = self.reserve(grant)
+        self.ledger.transition(run, "RESERVED", "CANCELLED")
+        grant_row = self.ledger.get_grant(grant)
+        self.assertEqual(grant_row["used_dispatches"], 0)
+        self.assertEqual(grant_row["status"], "CLOSED")
+        self.assertEqual(self.ledger.get_run(run)["dispatch_consumed"], 0)
+        self.assert_code(12, self.reserve, grant)
+        with closing(sqlite3.connect(self.database)) as db:
+            detail = json.loads(
+                db.execute(
+                    "SELECT detail_json FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+                    (run,),
+                ).fetchone()[0]
+            )
+        self.assertTrue(detail["grant_closed"])
+        with self.assertRaisesRegex(LedgerError, "Card is not pending approval") as failure:
+            self.ledger.approve("card-cancel", digest, via="manual_cli")
+        self.assertEqual(failure.exception.code, 10)
+
+    def test_single_dispatch_refund_and_close_roll_back_when_event_insert_fails(self):
+        grant = self.approve(max_dispatches=1)
+        run = self.reserve(grant)
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("""
+                CREATE TRIGGER synthetic_failure BEFORE INSERT ON run_events
+                BEGIN SELECT RAISE(ABORT, 'synthetic event failure'); END
+            """)
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "synthetic event failure"):
+            self.ledger.transition(run, "RESERVED", "CANCELLED")
+        self.assertEqual(self.ledger.get_run(run)["state"], "RESERVED")
+        self.assertEqual(self.ledger.get_run(run)["dispatch_consumed"], 1)
+        grant_row = self.ledger.get_grant(grant)
+        self.assertEqual(grant_row["used_dispatches"], 1)
+        self.assertEqual(grant_row["status"], "ACTIVE")
+
+    def test_expired_grant_refund_does_not_fail(self):
+        for terminal_state, use_launch in (("CANCELLED", False), ("FAILED_PRE_SUBMIT", True)):
+            with self.subTest(terminal_state=terminal_state):
+                card_id = f"card-expired-{terminal_state.lower()}"
+                grant = self.approve(card_id, task_key=card_id, max_dispatches=1, ttl_minutes=1)
+                run = self.reserve(grant)
+                if use_launch:
+                    self.launch(run)
+                self.now += timedelta(minutes=2)
+                if use_launch:
+                    self.ledger.transition(run, "LAUNCHING", "FAILED_PRE_SUBMIT", reason="auth_missing")
+                else:
+                    self.ledger.transition(run, "RESERVED", "CANCELLED")
+                grant_row = self.ledger.get_grant(grant)
+                self.assertEqual(grant_row["used_dispatches"], 0)
+                self.assertEqual(grant_row["status"], "EXPIRED")
+                self.assertEqual(self.ledger.get_run(run)["dispatch_consumed"], 0)
+                with closing(sqlite3.connect(self.database)) as db:
+                    detail = json.loads(
+                        db.execute(
+                            "SELECT detail_json FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+                            (run,),
+                        ).fetchone()[0]
+                    )
+                self.assertNotIn("grant_closed", detail)
 
     def test_strict_output_schema_shared_in_cli_common(self):
         from mah.adapters.cli_common import _response_schema, strict_output_schema

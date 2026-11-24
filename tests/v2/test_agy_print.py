@@ -453,7 +453,20 @@ class AgyPrintTests(unittest.TestCase):
         result = self.collect(capture)
         self.assertEqual(result["state"], "FAILED_PRE_SUBMIT")
         self.assertEqual(self.collect(capture)["state"], "FAILED_PRE_SUBMIT")
-        self.assertEqual(self.ledger.get_grant(self.grant)["used_dispatches"], 0)
+        grant = self.ledger.get_grant(self.grant)
+        self.assertEqual((grant["used_dispatches"], grant["status"]), (0, "ACTIVE"))
+        single_card = self.ledger.create_card(
+            "card-single-refund", repo_root=self.root, task_key="agy-single-refund", trigger_ids=["T2"],
+            prepare_mode="explicit", allowed_templates=["review"],
+            allowed_targets=[{"adapter": "agy-print", "model": MODEL, "effort_max": "low"}],
+            max_dispatches=1, ttl_minutes=10, timeout_seconds=60,
+            workspace_path=self.workspace, task_sha256=sha256(TASK).hexdigest(),
+        )
+        self.grant = self.ledger.approve("card-single-refund", single_card, via="manual_cli")
+        single_capture = replace(self.prepare(), termination="not_started", exit_code=None, pre_submit_reason="config_parse_error")
+        self.assertEqual(self.collect(single_capture)["state"], "FAILED_PRE_SUBMIT")
+        single_grant = self.ledger.get_grant(self.grant)
+        self.assertEqual((single_grant["used_dispatches"], single_grant["status"]), (0, "CLOSED"))
 
     def test_claim_and_pre_submit_receipt_cannot_contradict_other_evidence(self):
         capture = self.prepare(claim=False)
