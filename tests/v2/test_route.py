@@ -184,7 +184,7 @@ class RouteTests(unittest.TestCase):
                 self.assertIsNone(res["note"])
 
     def test_rule1_never_recommends_same_family_and_other_allows_all(self):
-        for controller, forbidden in (("codex", "gpt"), ("claude", "claude")):
+        for controller, forbidden in (("gpt", "gpt"), ("claude", "claude"), ("gemini", "gemini")):
             for task in ("review", "second_opinion", "research"):
                 for level in ("light", "standard", "deep"):
                     for mode in ("bundle", "worktree"):
@@ -193,9 +193,20 @@ class RouteTests(unittest.TestCase):
                         self.assertNotEqual(res["recommended"]["family"], forbidden)
                         if res["alternate"]:
                             self.assertFalse(res["alternate"]["model"].startswith(forbidden))
-        # controller=other does not exclude GPT -> picks 6.2 Sol on review standard bundle.
-        other = self._run_route(task="review", level="standard", mode="bundle", controller="other")
+        other = self._run_route(task="review", level="standard", mode="bundle", controller="other", verbose=True)
         self.assertEqual(other["recommended"]["model"], "gpt-6.2-sol")
+        self.assertFalse(any(item["reason"].startswith("same_family:") for item in other["skipped"]))
+
+    def test_codex_is_an_alias_for_gpt(self):
+        args = dict(task="review", level="standard", mode="bundle", refresh=True, verbose=True)
+        settings = self.cfg_path.read_text(encoding="utf-8")
+        for config in ('["agy-print", "codex-exec", "claude-print"]', '["codex-exec"]'):
+            with self.subTest(enabled_adapters=config):
+                self.cfg_path.write_text(f"{settings}enabled = {config}\n", encoding="utf-8")
+                self.assertEqual(
+                    self._run_route(controller="gpt", **args),
+                    self._run_route(controller="codex", **args),
+                )
 
     def test_quota_reroute_appendix_c_d7_save_alternates(self):
         until = (self.now + timedelta(hours=59, minutes=5, seconds=41)).isoformat(timespec="seconds")

@@ -27,7 +27,7 @@ from .model_detect import (
 from .preflight import INVALID_MODEL_ID, AdapterCheckReport, adapter_checks, common_checks
 from .quota import QuotaState, cached_quota_fallback, get_quota_states
 
-CONTROLLER_FAMILIES = {"codex": "gpt", "claude": "claude", "other": None}
+CONTROLLER_FAMILIES = {"gpt": "gpt", "codex": "gpt", "claude": "claude", "gemini": "gemini", "other": None}
 POOL_LABELS = {
     "agy:gemini": "Gemini",
     "agy:claude": "agy Claude",
@@ -818,7 +818,8 @@ def _route_normal(common, catalog, *, task, level, mode, controller, refresh, ve
     if not static_cell:
         out = {
             **base_meta, "ok": False, "card": False,
-            "reasons": [f"沒有符合條件的 Worker 候選（task={task}, level={level}, mode={mode}, controller={controller}）"],
+            "reasons": [f"沒有符合條件的 Worker 候選（task={task}, level={level}, mode={mode}, "
+                        f"controller={excluded_family or 'other'}）"],
             "recommended": None, "alternate": None, "note": None, "note_data": None,
             "warnings": list(warnings),
         }

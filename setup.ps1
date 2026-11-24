@@ -64,7 +64,7 @@ finally:
         Write-Output '[提示] 舊設定及資料保留。預設使用新設定，既有 Run 可用 --config 指向舊設定繼續處理。'
     }
 
-    foreach ($relativeRoot in @('.agents/skills/zmaharness', '.claude/skills/zmaharness')) {
+    foreach ($relativeRoot in @('.agents/skills/zmaharness', '.claude/skills/zmaharness', '.gemini/config/skills/zmaharness')) {
         $skillRoot = Join-Path $env:USERPROFILE $relativeRoot
         foreach ($file in $skillFiles) {
             $destination = Join-Path $skillRoot $file

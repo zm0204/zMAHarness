@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
+from mah.cli import parser
 from mah.config import ConfigError, default_config_path, load_config
 from mah.fake_adapter import FakeAdapter
 from mah.ledger import GrantLedger, LedgerError
@@ -92,6 +93,19 @@ class CliTests(unittest.TestCase):
         self.check(10, "grant", "approve", "demo-1", "--sha", digest,
                    "--via", "manual_cli", console="confirm")
         self.check(2, "card", "reject", "demo-1")
+
+    def test_route_accepts_supported_controller_values(self):
+        args = ["route", "--repo", str(REPO), "--task", "review",
+                "--level", "standard", "--mode", "bundle", "--controller"]
+        route_parser = parser()
+        for value in ("gpt", "codex", "claude", "gemini", "other"):
+            with self.subTest(controller=value):
+                self.assertEqual(route_parser.parse_args([*args, value]).controller, value)
+
+    def test_route_rejects_unknown_controller_with_usage_error(self):
+        result = self.check(2, "route", "--repo", str(REPO), "--task", "review",
+                            "--level", "standard", "--mode", "bundle", "--controller", "unknown")
+        self.assertIn("argument --controller: invalid choice", result.stderr)
 
     def test_scoped_cards_default_to_the_template_timeout(self):
         for template, timeout in (("review", 900), ("second-opinion", 900), ("research", 1200)):

@@ -24,7 +24,8 @@ zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card
 其他非零結果停止後續命令並保留收據。
 
 兩段 PowerShell 腳本都會寫入 zMAHarness 帳本並啟動 Worker，必須在沙盒外執行。依主控平台的機制請求核准：
-Codex 請求沙盒外或提權執行；Claude Code 使用一般的權限確認。被拒絕時回報原因，由主控 Agent 自己繼續原任務。
+Codex 請求沙盒外或提權執行，Claude Code 使用一般的權限確認，Antigravity 在 `run_command` 設定 `BypassSandbox: true` 由使用者單次核准。
+**不要對 `python` 選 always allow**，這會放行所有 Python 指令。被拒絕時回報原因，由主控 Agent 自己繼續原任務。
 Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effort` 一律照抄 `mah route` 輸出的 `adapter`、`model`、`effort`（不得自行改寫模型 ID 或補尾綴）。
 所有 Worker 目前只支援唯讀分析模板（`review`、`second-opinion`、`research`）；`delegate-implement` 對所有 Worker 都是延後階段的功能，`card create` 會以結束碼 2 拒絕，不要提議。
 `codex-exec` 只支援 Context-Bundle，Disposable Worktree 會在預留 Grant 之前以結束碼 17 拒絕；Worker 輸出出現任何工具呼叫時，結果以 `codex_tool_item_observed` 判為失敗。
@@ -45,8 +46,9 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
   上層不存在時 CLI 以結束碼 2 說明；請先在腳本中建立上層，再每次使用新的最後一層名稱。
 - **Windows PowerShell 5.1 與中文路徑**：5.1 會用系統字碼頁讀取沒有 BOM 的 `.ps1`，含中文路徑的腳本會變成亂碼。
   腳本檔請以 UTF-8 BOM 存檔；或在腳本開頭 `Set-Location` 到目標目錄，之後只用相對路徑，不在腳本中寫中文路徑。
-- **Claude Code 主控的等待方式**：Claude Code 單次工具呼叫最長 10 分鐘，而 Review 與 Second Opinion 的上限是 900 秒、Research 是 1200 秒。
-  執行 `mah dispatch` 的腳本必須以背景方式執行（工具的背景執行選項），等完成通知後再單次讀取結果；
+- **工具單次呼叫有時間上限的主控（Claude Code、Antigravity）**。Claude Code 單次工具呼叫最長 10 分鐘，Review 與 Second Opinion 的上限是 900 秒，Research 是 1200 秒。
+  以背景方式執行含 `mah dispatch` 的腳本。Claude Code 用工具的背景執行選項，Antigravity 設定 `run_command` 的 `WaitMsBeforeAsync` 自動轉入背景。
+  等完成通知後單次讀取結果，不輪詢。
   不可讓工具逾時中止 `mah`，否則 Run 會停在送出狀態不明。Codex 主控照原本方式在單次呼叫中阻塞等待。
   萬一 `mah` 仍被中止，Worker 已經自行結束時，之後單次 `mah collect <run_id>` 會從 `.pending` 串流補封存收據，完整的成功輸出可以照常驗收（不重新啟動 Worker、不重送）；輸出不完整時 Run 維持送出狀態不明，依 `resolution_actions` 收尾。
 
@@ -75,7 +77,7 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
    Research 為 1200 秒。
    這筆帳本紀錄對應使用者對卡片的決定。超出該回覆同意的範圍時須提出新的建議。
 3. 核對 Grant 有效且未使用（退款關閉的 Grant 是 `CLOSED`，不可重用），使用 `dispatch` 送出一筆符合範圍的唯讀分析。
-   省略 `--timeout`，讓本機 Python 在單次 `mah dispatch` 中按核准的模板上限阻塞等待（Claude Code 主控以背景執行，見上方注意事項），
+   省略 `--timeout`，讓本機 Python 在單次 `mah dispatch` 中按核准的模板上限阻塞等待（Claude Code 與 Antigravity 主控以背景執行，見上方注意事項），
    由同一程序處理存活、逾時、日誌及結果收集。嚴禁主控 Agent 反覆呼叫 `mah status` 輪詢進度。
    若有可平行的本地工作，僅在完成後單次讀取原命令的結果。回傳 `SUBMISSION_UNKNOWN` 時保留收據，
    可按需單次查核 `status` 或 `collect`。禁止自動重送。結束碼 30 時讀取狀態與原因。

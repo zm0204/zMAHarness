@@ -5,7 +5,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 
 # zMAHarness 協作
 
-主控 Agent（日常預設 Codex Sol High）平常直接完成原任務。一般工作不預載 Harness，也不為了提議協作主動查額度。
+Codex、Claude Code 與 Antigravity 都可擔任主控 Agent。主控 Agent（日常預設 Codex Sol High）平常直接完成原任務。一般工作不預載 Harness，也不為了提議協作主動查額度。
 只有符合下列條件且有實際收益，才提出一次協作建議。門檻沿用本機 TOML 的 `[triggers]`。
 
 | 觸發 | 可觀察的理由 |
@@ -14,13 +14,13 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | T2 | 變更觸及 `t2_risky_paths` 且差異行數達 `t2_risky_diff_lines` |
 | T3 | 預計讀取達 `t3_read_files` 或 `t3_read_kb`，預期產出很小 |
 | T4 | 既有 Codex 額度快照達 `t4_codex_used_percent`，且有低成本驗收方法。缺快照時不用 T4 |
-| T5 | 使用者主動要求協作，或呼叫 `$zmaharness`（Codex）/`/zmaharness`（Claude Code） |
+| T5 | 使用者主動要求協作（含 Antigravity），或呼叫 `$zmaharness`（Codex）/`/zmaharness`（Claude Code） |
 
 ## 出卡前檢查與選模
 
 決定提議協作後，先依檔案大小與可讀範圍決定模式，再判斷任務與等級，然後只執行一次：
 
-`python -B -m mah route --repo <目標專案根目錄> --task <review|second_opinion|research> --level <light|standard|deep> --mode <bundle|worktree> --controller <codex|claude|other>`
+`python -B -m mah route --repo <目標專案根目錄> --task <review|second_opinion|research> --level <light|standard|deep> --mode <bundle|worktree> --controller <gpt|codex|claude|gemini|other>`
 
 | 等級 | 何時用 |
 | --- | --- |
@@ -28,7 +28,7 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 | `standard` | T2 一般高風險 Review、研究需要整合較多線索 |
 | `deep` | T2 跨模組交互複雜、T1 第二意見、需要異質視角的深度推理 |
 
-- `--controller`：Codex 主控填 `codex`，Claude Code 主控填 `claude`，其他填 `other`。
+- `--controller` 填主控**目前使用模型**的家族。GPT 系列（含 Codex）填 `gpt`，Claude 填 `claude`，Gemini 填 `gemini`。從平台顯示的模型名稱判斷，不要猜。無法判斷時，或 GPT-OSS 等家族不在目錄中時，填 `other`。`codex` 是 `gpt` 的永久別名。
 - `--repo` 使用主控目前工作資料夾所屬的 Git 專案。目標不在目前工作資料夾內，或屬於雲端硬碟、網頁等非本機 Git 專案資料時，不在協作範圍內，不出卡。
 - `ok` 為 `false`（結束碼 30）或 `card` 為 `false` 時不出卡，用一句話說明 `reasons` 後由主控自己繼續原任務。
 - 【建議模型】與選項 2 用 `recommended.display`，選項 3 用 `alternate.display`；`alternate` 為 `null` 時省略選項 3。卡片只顯示 `display`，不顯示 Adapter 名稱。
@@ -44,10 +44,10 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 下方標題與選項為中文範本，翻譯時須保留語意與順序。中文環境使用「【zMAHarness 協作建議】」，
 其他語言使用對應翻譯，例如英文「[zMAHarness Collaboration Proposal]」。
 
-使用主控的原生互動提問工具（Codex Desktop 原生提問卡；Claude Code 用 AskUserQuestion）
+使用主控的原生互動提問工具（Codex Desktop 原生提問卡、Claude Code 的 `AskUserQuestion`、Antigravity 的 `ask_question`）
 送出**單一問題**，把資訊、三個選項與「或自行輸入回覆」放在同一頁，一步完成，不拆題、不翻頁。
 問題文字第一行放依語言規則顯示的卡片標題，空一行後，每項資訊獨立一行，格式為「【欄位名稱】內容」。
-問題文字一律使用純文字，禁止 Markdown 與「｜」分隔符號。
+除非該工具以 Markdown 呈現問題文字（見下方分支），一律使用純文字。所有分支都不使用「｜」分隔符號。
 
 - 【觸發原因】例如「【觸發原因】T5 · 使用者主動要求」。
 - 【建議模型】填 `mah route` 輸出的 `recommended.display`。
@@ -71,6 +71,22 @@ description: 當任務符合 T1～T5 且協作有明確收益時，用 zMAHarnes
 - **只有問題文字與選項字串**（例如 Codex 一般模式的 `request_user_input_async`）。
   問題文字放完整五項，每項一行。每個協作選項的字串都須寫出模型 ID 和 effort，
   例如「繼續協作（建議：<recommended.display>）」。不得只寫「繼續協作（建議）」或「繼續協作（備選）」。
+- **問題文字以 Markdown 呈現、選項只有字串**（例如 Antigravity 的 `ask_question`）。
+  第一行放卡片標題，空一行後，五項資訊用 Markdown 條列，每項一行，格式為 `- 【欄位名稱】內容`。
+  不使用 Markdown 標題、表格或「｜」。每個協作選項的字串都寫出模型 ID、effort、次數和唯讀，
+  例如「繼續協作（建議：gpt-6.2-sol · medium · 僅 1 次 · 唯讀）」。
+  收到 `A1: <選項全文>` 時依選項全文對應；Other 的自行輸入視為「手打覆寫」。
+  `ask_question` 會阻塞並在同一輪回傳使用者作答，收到該卡片的回覆後即可依回覆接著建卡、核准與派工。
+
+  ```text
+  【zMAHarness 協作建議】
+
+  - 【觸發原因】T5 · 使用者主動要求
+  - 【建議模型】gpt-6.2-sol · medium
+  - 【任務與範圍】Review · 1 個檔案（mah/adapters/base.py）· Context-Bundle
+  - 【授權限制】僅 1 次 · 唯讀（自動等待模型完成）
+  - 【為什麼建議協作？】<一句話>
+  ```
 
 依檔案大小及可讀範圍在出卡前決定模式，並把模式及範圍列在卡上。
 

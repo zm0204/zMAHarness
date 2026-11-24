@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -53,11 +54,43 @@ class SetupPreflightTests(unittest.TestCase):
             self.assertFalse((root / "appdata" / "zMAHarness").exists())
             self.assertFalse((root / "profile" / ".agents").exists())
             self.assertFalse((root / "profile" / ".claude").exists())
+            self.assertFalse((root / "profile" / ".gemini").exists())
             self.assertIn("winget install -e --id Python.Python.3.13", message)
             return message
 
     def test_missing_python_stops_before_creating_local_config(self):
         self.run_without_python()
+
+    def test_setup_installs_skill_and_reference_in_all_three_directories(self):
+        with tempfile.TemporaryDirectory(prefix="mah-setup-skills-") as temporary:
+            root = Path(temporary)
+            checkout = root / "checkout"
+            checkout.mkdir()
+            for name in ("setup.ps1", "harness-config.ps1", "harness.local.example.toml"):
+                shutil.copy2(ROOT / name, checkout / name)
+            for name in ("config", "mah", ".agents/skills/zmaharness"):
+                shutil.copytree(ROOT / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__"))
+
+            profile = root / "profile"
+            environment = os.environ | {
+                "USERPROFILE": str(profile), "LOCALAPPDATA": str(root / "local"),
+                "APPDATA": str(root / "roaming"), "PYTHONUSERBASE": str(root / "user-site"),
+                "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
+            }
+            for name in ("ZMAHARNESS_HOME", "PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE"):
+                environment.pop(name, None)
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-File", "setup.ps1"],
+                cwd=checkout, env=environment, capture_output=True, timeout=45,
+            )
+            self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+            source = ROOT / ".agents/skills/zmaharness"
+            for skill_parent in (".agents/skills", ".claude/skills", ".gemini/config/skills"):
+                for filename in ("SKILL.md", "references/dispatch.md"):
+                    with self.subTest(skill_parent=skill_parent, filename=filename):
+                        installed = profile / skill_parent / "zmaharness" / filename
+                        self.assertTrue(installed.is_file(), installed)
+                        self.assertEqual(installed.read_bytes(), (source / filename).read_bytes())
 
     def test_windowsapps_alias_explains_it_is_not_python(self):
         output = self.run_without_python(store_alias=True)

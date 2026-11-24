@@ -111,7 +111,7 @@ def parser():
     route_cmd.add_argument("--task", choices=("review", "second_opinion", "research"), required=True)
     route_cmd.add_argument("--level", choices=("light", "standard", "deep"), required=True)
     route_cmd.add_argument("--mode", choices=("bundle", "worktree"), required=True)
-    route_cmd.add_argument("--controller", choices=("codex", "claude", "other"), required=True)
+    route_cmd.add_argument("--controller", choices=("gpt", "codex", "claude", "gemini", "other"), required=True)
     route_cmd.add_argument("--override", help="使用者手打指定的模型 ID、key、別名或 effort")
     route_cmd.add_argument("--effort", help="手打覆寫時指定的思考程度")
     route_cmd.add_argument("--card-effort", help="卡片原本的思考程度（alias_effort=card 時沿用）")
