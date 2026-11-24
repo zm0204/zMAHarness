@@ -74,6 +74,7 @@
 !/tests/v2/fixtures/codex-0.169.0-sol-smoke-redacted.jsonl
 !/docs/v2/CODEX_SMOKE_TEST.md
 !/docs/v2/CLAUDE_SMOKE_TEST.md
+!/docs/v2/API_SMOKE_TEST.md
 !/mah/preflight.py
 !/tests/v2/test_preflight.py
 !/tests/v2/test_adapter_registry.py
