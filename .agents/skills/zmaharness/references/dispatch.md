@@ -8,6 +8,8 @@
 `$env:PYTHONPATH = '<zMAHarness 安裝目錄>'` 再執行命令，執行後還原原值。
 跨專案執行時省略 `--config`，使用 `%LOCALAPPDATA%\zMAHarness\harness.local.toml`。
 準備檔及工作目錄放在該設定指定的本機目錄，嚴禁在目標專案旁自建 `.harness-*` 臨時目錄。
+準備檔（`bundle create` 的輸出資料夾、`task.md`、卡片 JSON）與 Controller 證據檔一律放在 `%LOCALAPPDATA%\zMAHarness\prep\<run_id>`（與 `state`、`worktrees`、`gui` 同層）。
+這個位置在專案與 Git 工作區之外，也不在 Worker 或 Run 目錄內，符合 `mah bundle create` 與 `mah verify --evidence-file` 的排除規則。`prep` 的上層 `%LOCALAPPDATA%\zMAHarness` 已存在，每次使用新的 `<run_id>` 即可。
 
 zMAHarness 安裝目錄用於載入引擎。所有 `--repo <repo_root>` 和 Card JSON 的 `repo_root`
 皆指向目前開發的**目標 Git 專案根目錄**，例如你正在開發的專案。以目標專案的
@@ -35,7 +37,7 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
 依主控平台的機制請求沙盒外執行後重試一次；被拒絕就回報原因，由主控 Agent 自己繼續原任務。不得自動重試第二次。
 `dispatch` 回傳 `20` 且狀態是 `FAILED_PRE_SUBMIT`，或回報 `CANCELLED` 時，代表 Worker 沒有送出、沒有費用；這張單次 Grant 已關閉。
 把原因告訴使用者並暫停。失敗回報以原卡片的格式（同一任務、範圍、模型、授權限制）呈現選項：`不同意（由主控自己繼續）`／`修好後重試（同一範圍）`。
-使用者回覆重試後，在下一輪 `card create`（新卡）→ `grant approve` → `dispatch`。
+使用者回覆重試後（Antigravity 的 `ask_question` 於同一輪回傳，其他主控在下一輪），`card create`（新卡）→ `grant approve` → `dispatch`。
 `verify` 停在 `pending` 且無法補齊（例如 Worker 回傳 `partial`、缺少 `-o` 結果檔或結果無效）時，Run 會停在 `COLLECTING`，
 之後的派工都會以結束碼 13 擋住。查核後用 `python -B -m mah resolve <run_id> --mark-failed --reason "<原因>"` 收尾，
 `--reason` 必填並寫入帳本；已驗收通過的結果不能這樣標記（結束碼 30），請重跑 `verify`。
@@ -47,7 +49,8 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
 - **Windows PowerShell 5.1 與中文路徑**：5.1 會用系統字碼頁讀取沒有 BOM 的 `.ps1`，含中文路徑的腳本會變成亂碼。
   腳本檔請以 UTF-8 BOM 存檔；或在腳本開頭 `Set-Location` 到目標目錄，之後只用相對路徑，不在腳本中寫中文路徑。
 - **工具單次呼叫有時間上限的主控（Claude Code、Antigravity）**。Claude Code 單次工具呼叫最長 10 分鐘，Review 與 Second Opinion 的上限是 900 秒，Research 是 1200 秒。
-  以背景方式執行含 `mah dispatch` 的腳本。Claude Code 用工具的背景執行選項，Antigravity 設定 `run_command` 的 `WaitMsBeforeAsync` 自動轉入背景。
+  以背景方式執行含 `mah dispatch` 的腳本。Claude Code 用工具的背景執行選項，Antigravity 設定 `run_command` 的 `WaitMsBeforeAsync` 自動轉入背景，
+  且 `NotificationTimeoutSeconds` 要大於模板上限（Review／Second Opinion 至少 960，Research 至少 1260）。
   等完成通知後單次讀取結果，不輪詢。
   不可讓工具逾時中止 `mah`，否則 Run 會停在送出狀態不明。Codex 主控照原本方式在單次呼叫中阻塞等待。
   萬一 `mah` 仍被中止，Worker 已經自行結束時，之後單次 `mah collect <run_id>` 會從 `.pending` 串流補封存收據，完整的成功輸出可以照常驗收（不重新啟動 Worker、不重送）；輸出不完整時 Run 維持送出狀態不明，依 `resolution_actions` 收尾。
@@ -66,7 +69,7 @@ Card 的 `allowed_targets` 與 `dispatch` 的 `--adapter`、`--model`、`--effor
    - 輕量主控選項 3 若核准的是尚未開始實作的計畫審查，使用 `review`，在 `task.md` 的任務指示中
      寫入實作計畫。Context-Bundle 由 `bundle create` 將計畫與核准的完整原始檔一併封裝。
      其他情況沿用卡片核准的任務類型與範圍。
-2. 在顯示對話卡後的下一輪，收到使用者回覆才以 `card create` 建立單次卡片。綁定儲存庫、模板、Adapter、模型、
+2. 在顯示對話卡後，收到使用者回覆（Codex、Claude Code 是下一輪；Antigravity 的 `ask_question` 是同一輪回傳）才以 `card create` 建立單次卡片。綁定儲存庫、模板、Adapter、模型、
    effort 上限、實際任務 SHA-256、工作目錄、逾時及期限。Disposable Worktree 卡片一律填入 `worktree create` 輸出的
    `snapshot_head`（Context-Bundle 卡片不填）；核准後工作樹被切到其他提交時，派工會在啟動前以結束碼 10 拒絕，退回額度並關閉 Grant；重派需使用者回覆後重新出卡。
    主控 Agent 取得完整卡片 SHA-256

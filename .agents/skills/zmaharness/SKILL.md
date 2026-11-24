@@ -33,7 +33,8 @@ Codex、Claude Code 與 Antigravity 都可擔任主控 Agent。主控 Agent（�
 - `ok` 為 `false`（結束碼 30）或 `card` 為 `false` 時不出卡，用一句話說明 `reasons` 後由主控自己繼續原任務。
 - 【建議模型】與選項 2 用 `recommended.display`，選項 3 用 `alternate.display`；`alternate` 為 `null` 時省略選項 3。卡片只顯示 `display`，不顯示 Adapter 名稱。
 - `note` 不為 `null` 時，把它（依使用者語言）放進【為什麼建議協作？】。
-- `needs_unsandboxed_dispatch` 為 `true` 時，【授權限制】加「派工時需核准一次沙盒外執行」。
+- Antigravity 主控的沙盒讀不到 `%LOCALAPPDATA%` 設定，`mah route` 也要用 `run_command` 的 `BypassSandbox: true` 執行（使用者單次核准）。
+- `needs_unsandboxed_dispatch` 為 `true` 時，【授權限制】加「派工時需核准一次沙盒外執行」。Antigravity 主控的 `mah route` 是在沙盒外跑的，`needs_unsandboxed_dispatch` 無法反映派工時的沙盒狀態，因此 Antigravity 主控一律加上這句，不看該欄位。
 - 建卡與派工的 Adapter、模型 ID、effort 一律照抄輸出的 `adapter`、`model`、`effort`。
 - `warnings` 不為空時，在卡片外用一句話轉告使用者一次。
 - `/usage` 額度查詢只能由 `mah` 內部透過程式呼叫，**主控不得自己在 shell 執行含 `/usage` 的指令**（特別禁止在 Git Bash 執行）。
@@ -53,7 +54,7 @@ Codex、Claude Code 與 Antigravity 都可擔任主控 Agent。主控 Agent（�
 - 【建議模型】填 `mah route` 輸出的 `recommended.display`。
 - 【任務與範圍】顯示 Review、Second Opinion 或 Research，以及 Context-Bundle 或 Disposable Worktree。
   列出實際涵蓋的檔案名稱，必要時用相對路徑區分同名檔。若 Worker 可查閱工作樹內的關聯檔案，也要明列可查閱範圍。
-- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。這是對話核准（`codex_prompt`）與 Context-Bundle 的固定次數；本機設定 `approval.mode = "manual_cli"` 時，Disposable Worktree 卡片可到 `limits.max_dispatches_per_grant`，此時顯示實際卡片的次數，並註明「需在終端機親手核准」。`needs_unsandboxed_dispatch` 為 `true` 時，再加「派工時需核准一次沙盒外執行」。
+- 【授權限制】顯示 `僅 1 次 · 唯讀（自動等待模型完成）`。這是對話核准（`codex_prompt`）與 Context-Bundle 的固定次數；本機設定 `approval.mode = "manual_cli"` 時，Disposable Worktree 卡片可到 `limits.max_dispatches_per_grant`，此時顯示實際卡片的次數，並註明「需在終端機親手核准」。`needs_unsandboxed_dispatch` 為 `true` 時，或主控是 Antigravity 時（`mah route` 在沙盒外跑，該欄位不能反映派工時的沙盒狀態），一律再加「派工時需核准一次沙盒外執行」。
 - 【為什麼建議協作？】用一句白話說明本次協作的收益及選模原因，不提私人專案名稱；若 `mah route` 回傳 `note`，併入本欄。
 
 依提問工具實際提供的欄位排版。下方選項範本定義各選項的意思，依工具能力分配到相應欄位。
@@ -77,6 +78,7 @@ Codex、Claude Code 與 Antigravity 都可擔任主控 Agent。主控 Agent（�
   例如「繼續協作（建議：gpt-6.2-sol · medium · 僅 1 次 · 唯讀）」。
   收到 `A1: <選項全文>` 時依選項全文對應；Other 的自行輸入視為「手打覆寫」。
   `ask_question` 會阻塞並在同一輪回傳使用者作答，收到該卡片的回覆後即可依回覆接著建卡、核准與派工。
+  若 `ask_question` 工具要求把建議選項放第一或加 `(Recommended)`，仍照本 Skill 的固定順序（1 不同意、2 建議、3 備選），不加 `(Recommended)`。
 
   ```text
   【zMAHarness 協作建議】
@@ -103,7 +105,7 @@ Codex、Claude Code 與 Antigravity 都可擔任主控 Agent。主控 Agent（�
 **T1～T5 都必須暫停等待。** 原生卡片一送出，立即結束或暫停本輪，等待使用者對該卡片
 點選或手打回覆。初始的 T5 請求或 `$zmaharness`／`/zmaharness` 呼叫只觸發提議。即使初始請求已指定模型與
 檔案，也不得在顯示卡片的同一輪執行 `card create`、`grant approve` 或 `dispatch`。
-只有收到該卡片的回覆後，才能在下一輪依該回覆進行授權與派工。退款關閉單次 Grant 時的失敗回報與重試流程見 [references/dispatch.md](references/dispatch.md)。原生互動工具不可用時，
+只有收到該卡片的使用者回覆之後（Codex、Claude Code 是下一輪；Antigravity 的 `ask_question` 是同一輪回傳），才能依該回覆進行授權與派工。退款關閉單次 Grant 時的失敗回報與重試流程見 [references/dispatch.md](references/dispatch.md)。原生互動工具不可用時，
 回報限制並由主控 Agent 本地繼續原任務。Card ID、雜湊、Grant、工作目錄及證據檔留在背景。
 
 - **不同意**　主控 Agent 立即在本地繼續原任務，同一問題不再提議或追問。若已有待核准卡片，
