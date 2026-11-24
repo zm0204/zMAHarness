@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from mah import model_detect, process_tree
+from mah.catalog import load_catalog
 from mah.config import load_config
 from mah.model_detect import cache_path, executable_key, models_report, read_routing_cache
 from mah.route import route
@@ -19,6 +20,17 @@ REPO = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "model_catalog"
 AGY_FIXTURE = (FIXTURES / "agy-1.5.12-models-redacted.txt").read_bytes()
 CODEX_FIXTURE = (FIXTURES / "codex-0.169.0-debug-models-redacted.json").read_bytes()
+
+
+def _tested_agy_version():
+    """The agy version the repo catalog marks as verified; "matched" scenarios follow it on upgrade."""
+    catalog, warnings = load_catalog()
+    if catalog is None:
+        raise RuntimeError(f"repo model catalog failed to load: {warnings}")
+    return catalog.tested_cli["agy"]
+
+
+TESTED_AGY = _tested_agy_version()
 
 
 def _completed(returncode=0, stdout=b"", stderr=b""):
@@ -94,7 +106,7 @@ class CliVersionDriftUnitTests(unittest.TestCase):
                 exe_name = Path(argv[0]).name.lower()
                 version_calls.append(exe_name)
                 if exe_name == "agy.exe":
-                    return _completed(0, stdout=b"1.5.12\n")
+                    return _completed(0, stdout=f"{TESTED_AGY}\n".encode())
                 if exe_name == "codex.exe":
                     return _completed(0, stdout=b"codex-cli 0.170.0\n")
                 if exe_name == "claude.exe":
@@ -115,7 +127,7 @@ class CliVersionDriftUnitTests(unittest.TestCase):
             report = models_report(self.config, now=self.now)
 
         cli_versions = report["cli_versions"]
-        self.assertEqual(cli_versions["agy"], {"actual": "1.5.12", "tested": "1.5.12", "status": "matched"})
+        self.assertEqual(cli_versions["agy"], {"actual": TESTED_AGY, "tested": TESTED_AGY, "status": "matched"})
         expected_warning = "codex 0.170.0 尚未經過 zMAHarness 驗證（已驗證 0.169.0）"
         self.assertEqual(cli_versions["codex"], {
             "actual": "0.170.0", "tested": "0.169.0", "status": "drifted", "warning": expected_warning,
@@ -131,7 +143,7 @@ class CliVersionDriftUnitTests(unittest.TestCase):
 
         # Known versions are cached in routing_cache.json; unknown is not cached.
         cached = read_routing_cache(cache_path(self.config))
-        self.assertEqual(cached["cli_versions"]["agy"]["version"], "1.5.12")
+        self.assertEqual(cached["cli_versions"]["agy"]["version"], TESTED_AGY)
         self.assertEqual(cached["cli_versions"]["codex"]["version"], "0.170.0")
         self.assertNotIn("claude", cached["cli_versions"])
 
@@ -190,7 +202,7 @@ class CliVersionDriftUnitTests(unittest.TestCase):
         cpath = cache_path(self.config)
         cache_doc = read_routing_cache(cpath)
         cache_doc["cli_versions"] = {
-            "agy": {"exe_key": executable_key(self.agy), "version": "1.5.12", "fetched_at": "2026-11-20T01:00:00+00:00"},
+            "agy": {"exe_key": executable_key(self.agy), "version": TESTED_AGY, "fetched_at": "2026-11-20T01:00:00+00:00"},
             "codex": {"exe_key": executable_key(self.codex), "version": "0.170.0", "fetched_at": "2026-11-20T01:00:00+00:00"},
         }
         cpath.parent.mkdir(parents=True, exist_ok=True)
@@ -265,7 +277,7 @@ class DoctorCliVersionDriftTests(unittest.TestCase):
             f'claude_command = "{claude.as_posix()}"\n',
             encoding="utf-8",
         )
-        # Seed cached versions: agy matched (1.5.12), codex drifted (0.170.0 vs 0.169.0); claude uncached -> unknown.
+        # Seed cached versions: agy matched (catalog tested_cli), codex drifted (0.170.0 vs 0.169.0); claude uncached -> unknown.
         cpath = home / "state" / "routing_cache.json"
         cpath.parent.mkdir(parents=True, exist_ok=True)
         cpath.write_text(json.dumps({
@@ -274,7 +286,7 @@ class DoctorCliVersionDriftTests(unittest.TestCase):
             "quota": {},
             "breakers": {"claude_usage": None},
             "cli_versions": {
-                "agy": {"exe_key": executable_key(agy), "version": "1.5.12", "fetched_at": "2026-11-20T01:00:00+00:00"},
+                "agy": {"exe_key": executable_key(agy), "version": TESTED_AGY, "fetched_at": "2026-11-20T01:00:00+00:00"},
                 "codex": {"exe_key": executable_key(codex), "version": "0.170.0", "fetched_at": "2026-11-20T01:00:00+00:00"},
             },
         }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -287,9 +299,9 @@ class DoctorCliVersionDriftTests(unittest.TestCase):
             self.assertTrue(failures[0].startswith("[失敗] Windows 11"), output)
         else:
             self.assertEqual(failures, [], output)
-        self.assertIn("[通過] CLI 版本：agy 1.5.12、codex 0.170.0、claude unknown", output)
+        self.assertIn(f"[通過] CLI 版本：agy {TESTED_AGY}、codex 0.170.0、claude unknown", output)
         self.assertIn("[警告] CLI 版本提醒：codex 0.170.0 尚未經過 zMAHarness 驗證（已驗證 0.169.0）", output)
-        self.assertNotIn("agy 1.5.12 尚未經過", output)
+        self.assertNotIn(f"agy {TESTED_AGY} 尚未經過", output)
         self.assertNotIn("claude unknown 尚未經過", output)
 
 

@@ -3,7 +3,7 @@
 # 目錄只影響推薦，不影響授權：card create／dispatch 不讀這個檔；Orchestrator 由 registry 硬性拒絕。
 schema_version = 1
 updated = "2026-11-19"
-tested_cli = { agy = "1.5.12", codex = "0.169.0", claude = "2.1.325" }
+tested_cli = { agy = "1.5.14", codex = "0.169.0", claude = "2.1.325" }
 
 [routing]
 tight_percent = 90
